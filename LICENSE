@@ -19,12 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-CareChaser is a workflow tracking tool. It does not interpret laboratory
-results, diagnose patients, or recommend treatment, and it is not a medical
-device. The workflow model in workflow.yaml is a generic model synthesised
-from published guidance; it is not any hospital's approved policy, and the
-time limits in it are engineering defaults. All demonstration data is
-synthetic.
