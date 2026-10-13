@@ -1,0 +1,26 @@
+# Copy to `Caddyfile`, fill in the two placeholders, and keep the real file
+# out of version control (it is listed in .gitignore).
+#
+# Generate the password hash with:
+#     caddy hash-password --plaintext 'your-password'
+#
+# The hostname is built from the instance's Elastic IP through sslip.io,
+# which resolves <dashed-ip>.sslip.io to that IP. That gives Caddy a real
+# hostname to obtain a certificate for, without buying a domain.
+
+100-31-163-198.sslip.io {
+    # The MCP endpoint stays open: MCP clients authenticate at the protocol
+    # level, not with browser basic auth, and a password prompt here would
+    # make the server unusable to the agent it exists for.
+    handle /mcp* {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    # Everything a human sees is behind a login.
+    handle {
+        basicauth {
+            REPLACE_USER REPLACE_BCRYPT_HASH
+        }
+        reverse_proxy 127.0.0.1:8080
+    }
+}

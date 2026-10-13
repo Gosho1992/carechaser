@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareChaser — Clinical Workflow Command Centre</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#E9EDE7; --card:#F5F7F3; --slip:#DDE4D9;
+    --ink:#17231C; --muted:#5C6B60; --rule:#C7D0C4;
+    --late:#9E2B25; --crit:#7A1D18; --ontime:#2F6B4F; --live:#1C4E80;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:16px;line-height:1.5;padding:clamp(14px,2.5vw,34px)}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+  header{border-bottom:2px solid var(--ink);padding-bottom:12px;margin-bottom:18px}
+  .masthead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px}
+  h1{margin:0;font-size:clamp(21px,3vw,29px);font-weight:600;letter-spacing:-.015em}
+  .tagline{color:var(--muted);font-size:14px}
+  .badges{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .badge{font-size:12px;letter-spacing:.04em;text-transform:uppercase;
+    border:1px solid var(--rule);background:var(--slip);padding:4px 10px;border-radius:2px;color:var(--muted)}
+  .badge b{color:var(--ink);font-weight:500;text-transform:none;letter-spacing:0}
+  .badge.live{border-color:var(--ontime);color:var(--ontime)}
+
+  .clock{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;justify-content:space-between;
+    background:var(--slip);border:1px solid var(--rule);padding:10px 16px;margin-bottom:16px}
+  .clock .label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .clock strong{font-size:16px;font-weight:600}
+  .clock .note{color:var(--muted);font-size:13px;margin-left:8px}
+  .row-buttons{display:flex;gap:7px;flex-wrap:wrap}
+
+  button{font:inherit;cursor:pointer;border:1px solid var(--ink);background:var(--ink);
+    color:var(--card);padding:10px 18px;border-radius:999px}
+  button.ghost{background:transparent;color:var(--ink)}
+  button.small{padding:6px 13px;font-size:14px}
+  button:focus-visible{outline:3px solid var(--live);outline-offset:2px}
+  button[disabled]{opacity:.45;cursor:not-allowed}
+  button.listening{background:var(--live);border-color:var(--live);animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 7px rgba(28,78,128,.16)}}
+  @media(prefers-reduced-motion:reduce){button.listening{animation:none}}
+
+  .counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;
+    background:var(--rule);border:1px solid var(--rule);margin-bottom:16px}
+  .count{background:var(--card);padding:14px 16px}
+  .count b{display:block;font-family:"IBM Plex Mono",monospace;font-size:30px;font-weight:600;line-height:1.1}
+  .count span{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .count.crit b{color:var(--crit)} .count.late b{color:var(--late)}
+  @media(max-width:620px){.counts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+  .grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:clamp(14px,2vw,26px);align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--card);border:1px solid var(--rule);margin-bottom:16px}
+  .panel h2{margin:0;padding:12px 16px;font-size:14px;font-weight:600;letter-spacing:.02em;
+    border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .panel h2 span{font-weight:400;color:var(--muted);font-size:13px}
+
+  .case{display:grid;grid-template-columns:auto 1fr auto;gap:3px 14px;padding:13px 16px;
+    border-bottom:1px solid var(--rule);cursor:pointer;border-left:4px solid transparent}
+  .case:last-child{border-bottom:0}
+  .case:hover,.case:focus-visible{background:var(--slip);outline:none}
+  .case.sel{background:var(--slip)}
+  .case.late{border-left-color:var(--late)} .case.crit{border-left-color:var(--crit)}
+  .case .id{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+  .case .what{font-weight:500}
+  .case .where{grid-column:2;color:var(--muted);font-size:14px}
+  .case .clk{grid-row:1/3;grid-column:3;text-align:right;align-self:center}
+  .case .clk b{font-family:"IBM Plex Mono",monospace;font-size:20px;font-weight:600;display:block}
+  .case .clk small{color:var(--muted);font-size:12px}
+  .case.late .clk b{color:var(--late)} .case.crit .clk b{color:var(--crit)}
+  .case .tag{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--crit);font-weight:600}
+  .empty{padding:16px;color:var(--muted);font-size:14px}
+
+  .status{padding:14px 16px;border-bottom:1px solid var(--rule)}
+  .status .verdict{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  .status .verdict b{font-size:13px;text-transform:uppercase;letter-spacing:.09em;
+    border:2px solid currentColor;padding:3px 10px}
+  .status .verdict .big{font-family:"IBM Plex Mono",monospace;font-size:34px;font-weight:600;line-height:1}
+  .status .verdict .over{color:var(--late);font-size:15px;font-weight:500}
+  .status.late .verdict b,.status.late .verdict .big{color:var(--late)}
+  .status.crit .verdict b,.status.crit .verdict .big{color:var(--crit)}
+  .status.ok .verdict b,.status.ok .verdict .big{color:var(--ontime)}
+  .status dl{display:grid;grid-template-columns:auto 1fr;gap:3px 16px;margin:0;font-size:15px}
+  .status dt{color:var(--muted)} .status dd{margin:0;font-weight:500}
+  .tl{list-style:none;margin:0;padding:14px 16px}
+  .tl li{position:relative;padding:0 0 16px 20px;border-left:2px solid var(--rule)}
+  .tl li:last-child{padding-bottom:0}
+  .tl li::before{content:"";position:absolute;left:-6px;top:4px;width:10px;height:10px;
+    border-radius:50%;background:var(--rule)}
+  .tl li.escalation::before,.tl li.chase::before{background:var(--late)}
+  .tl li.intake::before{background:var(--live)}
+  .tl li.current::before{background:var(--ink)}
+  .tl .when{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+  .tl .title{font-weight:500}
+  .tl .detail{color:var(--muted);font-size:14px}
+
+  .mic{display:flex;gap:9px;align-items:center;padding:14px 16px 0}
+  form.ask{display:flex;gap:8px;padding:12px 16px}
+  input,select{font:inherit;padding:9px 11px;border:1px solid var(--rule);
+    background:var(--paper);color:var(--ink);border-radius:2px;min-width:0}
+  input[type=text]{flex:1}
+  input:focus-visible,select:focus-visible{outline:2px solid var(--live);outline-offset:1px}
+  .turn{padding:11px 16px;border-top:1px solid var(--rule)}
+  .said{color:var(--muted);font-size:14px;margin:0 0 3px}
+  .said::before{content:"You  ";color:var(--ink);font-weight:500}
+  .reply{margin:0;font-size:16px}
+  .reply::before{content:"CareChaser  ";font-size:13px;color:var(--muted);font-weight:500}
+  .trace{margin:6px 0 0;font-size:12px;color:var(--muted)}
+  .trace code{font-family:"IBM Plex Mono",monospace;color:var(--ink);background:var(--slip);padding:1px 5px}
+
+  .confirm{border:2px solid var(--late);background:var(--card);padding:14px 16px;margin:0}
+  .confirm h3{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--late)}
+  .confirm dl{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:0 0 12px;font-size:15px}
+  .confirm dt{color:var(--muted)} .confirm dd{margin:0;font-weight:500}
+
+  .create{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .create label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:3px}
+  .create .wide{grid-column:1/-1}
+  .create input,.create select{width:100%}
+
+  .intake{padding:14px 16px}
+  textarea{font:inherit;width:100%;padding:10px 11px;border:1px solid var(--rule);
+    background:var(--paper);color:var(--ink);border-radius:2px;resize:vertical;
+    font-family:"IBM Plex Mono",monospace;font-size:14px;line-height:1.45;margin-bottom:10px}
+  textarea:focus-visible{outline:2px solid var(--live);outline-offset:1px}
+  .intake .note{margin:9px 0 0;font-size:14px;color:var(--muted)}
+
+  .review{border-top:1px solid var(--rule)}
+  .review .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+    padding:12px 16px 6px;font-size:14px;color:var(--muted)}
+  .review .head b{color:var(--ink);font-weight:600}
+  .rrow{display:grid;grid-template-columns:18px minmax(0,1.5fr) minmax(0,1.2fr) 86px 30px;
+    gap:8px;align-items:center;padding:8px 16px;border-top:1px solid var(--rule)}
+  .rrow .mark{font-weight:600;color:var(--ontime)}
+  .rrow.flagged{background:#F3E7E6;border-left:4px solid var(--late);padding-left:12px}
+  .rrow.flagged .mark{color:var(--late)}
+  .rrow input,.rrow select{width:100%;padding:6px 8px;font-size:14px}
+  .rrow .drop{border:1px solid var(--rule);background:transparent;color:var(--muted);
+    padding:3px 9px;border-radius:999px;font-size:15px;line-height:1}
+  .rrow .removed{display:inline-block;background:#F3E7E6;color:var(--late);
+    border:1px solid var(--late);border-radius:2px;padding:0 6px;margin-left:6px;
+    font-family:"IBM Plex Mono",monospace;font-size:11px;text-decoration:line-through}
+  .rrow .why{grid-column:2/-1;font-size:13px;color:var(--late);margin-top:-2px}
+  .rrow .status{grid-column:2/-1;font-size:12px;color:var(--muted);margin-top:-4px}
+  .review .foot{display:flex;justify-content:space-between;align-items:center;gap:12px;
+    padding:12px 16px;border-top:1px solid var(--rule);flex-wrap:wrap}
+  @media(max-width:620px){
+    .rrow{grid-template-columns:18px 1fr 30px}
+    .rrow select,.rrow input[type=number]{grid-column:2/-1}
+  }
+
+  .act{list-style:none;margin:0;padding:12px 16px;font-size:14px}
+  .act li{display:flex;gap:12px;padding:5px 0;border-bottom:1px solid var(--rule)}
+  .act li:last-child{border-bottom:0}
+  .act .t{font-family:"IBM Plex Mono",monospace;color:var(--muted);font-size:12px;white-space:nowrap;padding-top:2px}
+
+  footer{margin-top:20px;color:var(--muted);font-size:13px;max-width:78ch}
+  .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="masthead">
+    <h1>CareChaser</h1>
+    <span class="tagline">Clinical workflow command centre · Musafah Surgical Hospital</span>
+    <div class="badges">
+      <span class="badge">Demo user <b>Dr. Khan</b></span>
+      <span class="badge">Synthetic data</span>
+      <span class="badge live" id="brain">Engine <b>—</b></span>
+    </div>
+  </div>
+</header>
+
+<section class="clock" aria-live="polite">
+  <div>
+    <span class="label">Demo clock</span>
+    <strong id="clock-now" class="mono">—</strong><span class="note" id="clock-note"></span>
+  </div>
+  <div class="row-buttons">
+    <button class="ghost small" data-advance="1">+1 hour</button>
+    <button class="ghost small" data-advance="24">+1 day</button>
+    <button class="ghost small" data-advance="72">+3 days</button>
+    <button class="ghost small" id="clock-reset">Reset</button>
+  </div>
+</section>
+
+<section class="counts">
+  <div class="count late"><b id="n-stuck">—</b><span>Stuck</span></div>
+  <div class="count crit"><b id="n-crit">—</b><span>Critical stuck</span></div>
+  <div class="count"><b id="n-esc">—</b><span>Escalation due</span></div>
+  <div class="count"><b id="n-fup">—</b><span>Open follow-ups</span></div>
+</section>
+
+<div class="grid">
+  <div>
+    <section class="panel">
+      <h2>Needs attention <span id="queue-note"></span></h2>
+      <div id="queue" class="empty">Loading…</div>
+    </section>
+
+    <section class="panel">
+      <h2>Read a report <span>paste what a nurse already has</span></h2>
+      <div class="intake">
+        <label class="vh" for="report">Report text</label>
+        <textarea id="report" rows="7" placeholder="Paste a report, or load the sample."></textarea>
+        <div class="row-buttons">
+          <button id="btn-read">Read report</button>
+          <button class="ghost" id="btn-sample" type="button">Load sample</button>
+        </div>
+        <p class="note" id="intake-note"></p>
+      </div>
+      <div id="review"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Create a case <span>try your own scenario</span></h2>
+      <form class="create" id="create">
+        <div class="wide">
+          <label for="f-test">Test</label>
+          <input id="f-test" type="text" value="Histopathology (biopsy)" required>
+        </div>
+        <div>
+          <label for="f-state">Stage</label>
+          <select id="f-state"></select>
+        </div>
+        <div>
+          <label for="f-hours">Hours already waiting</label>
+          <input id="f-hours" type="number" value="72" min="0" step="1">
+        </div>
+        <div>
+          <label for="f-urgency">Urgency</label>
+          <select id="f-urgency">
+            <option value="routine">Routine</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+        <div>
+          <label for="f-patient">Patient reference</label>
+          <input id="f-patient" type="text" placeholder="auto">
+        </div>
+        <div class="wide"><button type="submit">Create case</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div>
+    <section class="panel" id="detail-panel" hidden>
+      <h2 id="detail-title">Case</h2>
+      <div id="detail-confirm"></div>
+      <div id="detail-status"></div>
+      <ul class="tl" id="detail-timeline"></ul>
+      <div class="row-buttons" style="padding:0 16px 14px">
+        <button class="ghost small" id="btn-escalate">Escalate</button>
+        <button class="ghost small" id="btn-review">Mark reviewed</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Ask CareChaser <span>voice or text</span></h2>
+      <div class="mic">
+        <button id="listen">Hold to speak</button>
+        <button id="clear" class="ghost">Start over</button>
+      </div>
+      <form class="ask" id="typed">
+        <label class="vh" for="text">What would you like to ask?</label>
+        <input id="text" type="text" autocomplete="off" placeholder="What is stuck today?">
+        <button class="ghost" type="submit">Ask</button>
+      </form>
+      <div id="log"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Agent activity <span>what CareChaser did</span></h2>
+      <ul class="act" id="activity"><li class="empty">Nothing yet.</li></ul>
+    </section>
+  </div>
+</div>
+
+<footer>
+  CareChaser reports workflow status only. It does not interpret results, diagnose,
+  or recommend treatment. Urgency is supplied by the clinical system, never decided here.
+  Every figure shown comes from the deterministic workflow engine, not from the language model.
+  Synthetic data; identity is simulated for this demo.
+</footer>
+
+<script>
+const SESSION = "web-" + Math.random().toString(36).slice(2, 9);
+const SPEAKER = "Dr. Khan";
+const SPEAKER_ROLE = "responsible_clinician";
+
+const $ = id => document.getElementById(id);
+let selected = null;
+
+const activity = [];
+function logActivity(text){
+  const stamp = new Date().toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+  activity.unshift({stamp, text});
+  $("activity").replaceChildren(...activity.slice(0, 12).map(item => {
+    const li = document.createElement("li");
+    const t = document.createElement("span"); t.className = "t"; t.textContent = item.stamp;
+    const d = document.createElement("span"); d.textContent = item.text;
+    li.append(t, d);
+    return li;
+  }));
+}
+
+function say(text){
+  if (!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1.03;
+  speechSynthesis.speak(utter);
+}
+
+async function refreshBoard(){
+  let data;
+  try { data = await (await fetch("/api/board")).json(); }
+  catch (err) { $("queue").textContent = "Cannot reach the CareChaser server."; return; }
+
+  const when = new Date(data.clock.now);
+  $("clock-now").textContent = when.toLocaleString(undefined,
+    {weekday:"long", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"});
+  $("clock-note").textContent = data.clock.offset_hours
+    ? "moved forward " + data.clock.offset_hours + "h" : "";
+
+  $("n-stuck").textContent = data.counts.stuck;
+  $("n-crit").textContent  = data.counts.critical_stuck;
+  $("n-esc").textContent   = data.counts.escalation_due;
+  $("n-fup").textContent   = data.counts.followups;
+
+  const queue = $("queue");
+  if (!data.cases.length){
+    queue.className = "empty";
+    queue.textContent = "Nothing is stuck. Move the clock forward, or create a case below.";
+    $("queue-note").textContent = "";
+    return;
+  }
+  queue.className = "";
+  queue.replaceChildren(...data.cases.map(c => {
+    const critical = String(c.urgency).toLowerCase() === "critical";
+    const el = document.createElement("article");
+    el.className = "case " + (critical ? "crit" : "late") + (c.case_id === selected ? " sel" : "");
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+
+    const id = document.createElement("div"); id.className = "id"; id.textContent = c.case_id;
+    const what = document.createElement("div"); what.className = "what";
+    what.textContent = c.test_type + " — " + c.patient;
+    if (critical){
+      const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = "  critical";
+      what.append(tag);
+    }
+    const where = document.createElement("div"); where.className = "where";
+    where.textContent = c.state + " · " + c.owner
+      + (c.escalation_due && c.chase ? "  →  " + c.chase : "");
+
+    const clk = document.createElement("div"); clk.className = "clk";
+    const b = document.createElement("b");
+    b.textContent = c.hours_in_state < 1
+      ? Math.round(c.hours_in_state * 60) + "m" : Math.round(c.hours_in_state) + "h";
+    const s = document.createElement("small");
+    s.textContent = c.hours_overdue > 0 ? "+" + Math.round(c.hours_overdue) + "h over" : "due now";
+    clk.append(b, s);
+
+    el.append(id, what, where, clk);
+    el.addEventListener("click", () => openCase(c.case_id));
+    el.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " "){ e.preventDefault(); openCase(c.case_id); }
+    });
+    return el;
+  }));
+  $("queue-note").textContent = data.cases.length + " shown";
+}
+
+async function openCase(caseId){
+  selected = caseId;
+  const data = await (await fetch("/api/case/" + encodeURIComponent(caseId))).json();
+  if (!data.found) return;
+
+  $("detail-panel").hidden = false;
+  $("detail-title").textContent = caseId + " · " + data.test_type;
+
+  const critical = String(data.urgency).toLowerCase() === "critical";
+  const status = document.createElement("div");
+  status.className = "status " + (data.status === "STUCK" ? (critical ? "crit" : "late") : "ok");
+  const verdict = document.createElement("div"); verdict.className = "verdict";
+  const flag = document.createElement("b");
+  flag.textContent = data.status === "STUCK" ? (critical ? "Critical · stuck" : "Stuck") : "On time";
+  const big = document.createElement("span"); big.className = "big";
+  big.textContent = data.hours_in_state < 1
+    ? Math.round(data.hours_in_state * 60) + "m" : Math.round(data.hours_in_state) + "h";
+  verdict.append(flag, big);
+  if (data.hours_overdue > 0){
+    const over = document.createElement("span"); over.className = "over";
+    over.textContent = "+" + Math.round(data.hours_overdue) + "h past the "
+      + data.sla_hours + "h limit";
+    verdict.append(over);
+  }
+  const dl = document.createElement("dl");
+  [["Stage", data.state], ["Owner", data.owner], ["Patient", data.patient],
+   ["Escalation", data.escalation_target
+      ? data.escalation_target + (data.escalation_due ? " (due)" : "") : "none configured"]]
+    .forEach(([k, v]) => {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v;
+      dl.append(dt, dd);
+    });
+  status.append(verdict, dl);
+  $("detail-status").replaceChildren(status);
+
+  $("detail-timeline").replaceChildren(...data.events.map(ev => {
+    const li = document.createElement("li");
+    li.className = ev.kind;
+    const when = document.createElement("div"); when.className = "when";
+    when.textContent = new Date(ev.at).toLocaleString(undefined,
+      {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"})
+      + (ev.when ? "  ·  " + ev.when : "");
+    const title = document.createElement("div"); title.className = "title"; title.textContent = ev.title;
+    li.append(when, title);
+    if (ev.detail){
+      const d = document.createElement("div"); d.className = "detail"; d.textContent = ev.detail;
+      li.append(d);
+    }
+    return li;
+  }));
+  refreshBoard();
+}
+
+function showConfirmation(preview){
+  const box = document.createElement("div");
+  box.className = "confirm";
+  const h = document.createElement("h3"); h.textContent = "Confirm escalation";
+  const dl = document.createElement("dl");
+  [["Case", preview.case_id], ["Currently with", preview.current_owner],
+   ["Escalate to", preview.escalate_to],
+   ["Waiting", Math.round(preview.hours_in_state) + " hours"]]
+    .forEach(([k, v]) => {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v;
+      dl.append(dt, dd);
+    });
+  const yes = document.createElement("button"); yes.textContent = "Confirm";
+  const no = document.createElement("button"); no.className = "ghost"; no.textContent = "Cancel";
+  yes.addEventListener("click", () => doEscalate(preview.case_id, true));
+  no.addEventListener("click", () => $("detail-confirm").replaceChildren());
+  const row = document.createElement("div"); row.className = "row-buttons"; row.append(yes, no);
+  box.append(h, dl, row);
+  $("detail-panel").hidden = false;
+  $("detail-confirm").replaceChildren(box);
+}
+
+async function doEscalate(caseId, confirm){
+  const res = await fetch(`/api/case/${encodeURIComponent(caseId)}/escalate?confirm=${confirm}`,
+                          {method: "POST"});
+  const data = await res.json();
+  if (!data.ok){ renderTurn("escalate " + caseId, data.message, []); return; }
+  if (!confirm){
+    showConfirmation(data);
+    renderTurn("escalate " + caseId, data.message, []);
+    say(data.message);
+    return;
+  }
+  $("detail-confirm").replaceChildren();
+  logActivity(caseId + " escalated to " + data.escalate_to);
+  renderTurn("yes, escalate " + caseId, data.message, []);
+  say(data.message);
+  openCase(caseId);
+}
+
+function renderTurn(said, reply, calls){
+  const turn = document.createElement("div");
+  turn.className = "turn";
+  const q = document.createElement("p"); q.className = "said"; q.append(said);
+  const a = document.createElement("p"); a.className = "reply"; a.append(reply);
+  turn.append(q, a);
+  if (calls && calls.length){
+    const t = document.createElement("p"); t.className = "trace";
+    calls.forEach((c, i) => {
+      if (i) t.append(", then ");
+      t.append("called ");
+      const code = document.createElement("code"); code.textContent = c.tool;
+      t.append(code);
+    });
+    turn.append(t);
+  }
+  $("log").prepend(turn);
+}
+
+async function ask(said){
+  if (!said.trim()) return;
+  $("listen").disabled = true;
+  try {
+    const res = await fetch("/api/ask", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({said, session_id: SESSION, speaker: SPEAKER, speaker_role: SPEAKER_ROLE})
+    });
+    const data = await res.json();
+    renderTurn(said, data.reply, data.tool_calls);
+    say(data.reply);
+
+    (data.tool_calls || []).forEach(call => {
+      logActivity("called " + call.tool);
+      const r = call.result || {};
+      // A spoken escalation shows its confirmation card on screen.
+      if (call.tool === "escalate" && r.recorded === false && r.escalate_to) showConfirmation(r);
+      if (call.tool === "escalate" && r.recorded === true) openCase(r.case_id);
+      if (call.tool === "get_case_status" && r.found) openCase(r.case_id);
+      if (call.tool === "create_case" && r.ok) openCase(r.case_id);
+    });
+    refreshBoard();
+  } catch (err) {
+    renderTurn(said, "The CareChaser server did not respond.", []);
+  } finally {
+    $("listen").disabled = false;
+  }
+}
+
+$("typed").addEventListener("submit", e => {
+  e.preventDefault();
+  ask($("text").value);
+  $("text").value = "";
+});
+
+$("clear").addEventListener("click", () => {
+  fetch("/api/reset", {method: "POST", headers: {"Content-Type": "application/json"},
+                       body: JSON.stringify({said: "", session_id: SESSION})});
+  $("log").replaceChildren();
+});
+
+async function moveClock(hours){
+  document.querySelectorAll(".row-buttons button").forEach(b => b.disabled = true);
+  try {
+    const res = await fetch(hours === null ? "/api/clock/reset" : "/api/clock/advance", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({hours: hours || 0})
+    });
+    const data = await res.json();
+    logActivity(hours === null ? "clock reset" : "clock advanced " + hours + "h");
+    if (data.message){
+      renderTurn(hours === null ? "reset the clock" : "advance " + hours + " hours", data.message, []);
+      say(data.message);
+    }
+    await refreshBoard();
+    if (selected) openCase(selected);
+  } finally {
+    document.querySelectorAll(".row-buttons button").forEach(b => b.disabled = false);
+  }
+}
+document.querySelectorAll("[data-advance]").forEach(btn =>
+  btn.addEventListener("click", () => moveClock(Number(btn.dataset.advance))));
+$("clock-reset").addEventListener("click", () => moveClock(null));
+
+async function loadWorkflow(){
+  try {
+    const wf = await (await fetch("/api/workflow")).json();
+    $("f-state").replaceChildren(...wf.states.map(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = s.name + (s.sla_hours ? " (limit " + s.sla_hours + "h)" : "");
+      if (s.id === "result_produced") opt.selected = true;
+      return opt;
+    }));
+    workflowStates = wf.states;
+  } catch (err) { /* the form still works with whatever the server defaults to */ }
+}
+
+$("create").addEventListener("submit", async e => {
+  e.preventDefault();
+  const body = {
+    test_type: $("f-test").value,
+    current_state: $("f-state").value,
+    hours_waiting: Number($("f-hours").value),
+    urgency: $("f-urgency").value
+  };
+  if ($("f-patient").value.trim()) body.patient = $("f-patient").value.trim();
+
+  const data = await (await fetch("/api/case", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  })).json();
+
+  renderTurn("create a case", data.message, []);
+  say(data.message);
+  if (data.ok){
+    logActivity("created " + data.case_id);
+    await refreshBoard();
+    openCase(data.case_id);
+  }
+});
+
+/* ---------------- report intake ---------------- */
+
+const SAMPLE_REPORT = `Musafah Surgical Hospital
+Patient MK-4471
+
+CBC — completed
+Liver function — completed
+Serum potassium 6.8 mmol/L — result available
+Vitamin B12 — not completed
+Chest X-Ray — not completed`;
+
+let reviewRows = [];
+let reviewPatient = null;
+let workflowStates = [];
+
+$("btn-sample").addEventListener("click", () => {
+  $("report").value = SAMPLE_REPORT;
+  $("report").focus();
+});
+
+$("btn-read").addEventListener("click", async () => {
+  const text = $("report").value.trim();
+  if (!text){ $("intake-note").textContent = "Paste a report first."; return; }
+
+  $("btn-read").disabled = true;
+  $("intake-note").textContent = "Reading…";
+  try {
+    const data = await (await fetch("/api/intake/read", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text})
+    })).json();
+
+    $("intake-note").textContent = data.message || "";
+    logActivity("read a report");
+    if (!data.ok){ reviewRows = []; renderReview(); return; }
+
+    reviewRows = data.rows.map(row => ({...row, hours_waiting: row.hours_waiting || 0}));
+    reviewPatient = data.patient || null;
+    renderReview();
+    if (data.spoken) say(data.spoken);
+  } catch (err) {
+    $("intake-note").textContent = "Could not reach the server.";
+  } finally {
+    $("btn-read").disabled = false;
+  }
+});
+
+function renderReview(){
+  const host = $("review");
+  if (!reviewRows.length){ host.replaceChildren(); return; }
+
+  const box = document.createElement("div");
+  box.className = "review";
+
+  const head = document.createElement("div");
+  head.className = "head";
+  const left = document.createElement("span");
+  left.innerHTML = "<b>" + reviewRows.length + "</b> test"
+    + (reviewRows.length === 1 ? "" : "s") + " found"
+    + (reviewPatient ? " · patient " + reviewPatient : "");
+  const right = document.createElement("span");
+  right.textContent = "nothing created yet";
+  head.append(left, right);
+  box.append(head);
+
+  reviewRows.forEach((row, index) => {
+    const el = document.createElement("div");
+    el.className = "rrow" + (row.ok ? "" : " flagged");
+
+    const mark = document.createElement("div");
+    mark.className = "mark";
+    mark.textContent = row.ok ? "✓" : "!";
+    mark.title = row.ok ? "ready" : "needs a look";
+
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = row.test_name;
+    name.setAttribute("aria-label", "Test name");
+    name.addEventListener("input", () => { row.test_name = name.value; });
+
+    const stage = document.createElement("select");
+    stage.setAttribute("aria-label", "Stage");
+    const blank = document.createElement("option");
+    blank.value = ""; blank.textContent = "— choose a stage —";
+    stage.append(blank);
+    workflowStates.forEach(st => {
+      const opt = document.createElement("option");
+      opt.value = st.id; opt.textContent = st.name;
+      if (st.id === row.state) opt.selected = true;
+      stage.append(opt);
+    });
+    stage.addEventListener("change", () => {
+      row.state = stage.value || null;
+      const chosen = workflowStates.find(st => st.id === stage.value);
+      row.owner_role = chosen ? chosen.owner_role : null;
+      // Correcting the stage by hand is exactly how a flagged row is fixed.
+      row.ok = Boolean(row.state && row.owner_role);
+      row.issues = row.ok ? [] : row.issues;
+      renderReview();
+    });
+
+    const hours = document.createElement("input");
+    hours.type = "number"; hours.min = "0"; hours.step = "1";
+    hours.value = row.hours_waiting;
+    hours.setAttribute("aria-label", "Hours already waiting");
+    hours.addEventListener("input", () => { row.hours_waiting = Number(hours.value) || 0; });
+
+    const drop = document.createElement("button");
+    drop.type = "button"; drop.className = "drop"; drop.textContent = "×";
+    drop.title = "Remove this row";
+    drop.addEventListener("click", () => { reviewRows.splice(index, 1); renderReview(); });
+
+    el.append(mark, name, stage, hours, drop);
+
+    if (!row.ok && row.issues && row.issues.length){
+      const why = document.createElement("div");
+      why.className = "why";
+      why.textContent = row.issues.join("; ") + " — set the stage to fix it";
+      el.append(why);
+    } else {
+      const status = document.createElement("div");
+      status.className = "status";
+      status.textContent = "report said: " + (row.status_text || "nothing");
+      if (row.removed && row.removed.length){
+        const chips = document.createElement("span");
+        chips.className = "removed";
+        chips.textContent = "removed: " + row.removed.join(" · ");
+        chips.title = "Clinical values are never carried into the workflow";
+        status.append(" "); status.append(chips);
+      }
+      el.append(status);
+    }
+    box.append(el);
+  });
+
+  const ready = reviewRows.filter(r => r.ok);
+  const foot = document.createElement("div");
+  foot.className = "foot";
+  const summary = document.createElement("span");
+  summary.className = "note";
+  summary.textContent = ready.length === reviewRows.length
+    ? "All rows ready."
+    : (reviewRows.length - ready.length) + " row(s) still need a stage.";
+  const create = document.createElement("button");
+  create.textContent = "Create " + ready.length + " case" + (ready.length === 1 ? "" : "s");
+  create.disabled = ready.length === 0;
+  create.addEventListener("click", commitReview);
+  foot.append(summary, create);
+  box.append(foot);
+
+  host.replaceChildren(box);
+}
+
+async function commitReview(){
+  const ready = reviewRows.filter(r => r.ok);
+  if (!ready.length) return;
+
+  const data = await (await fetch("/api/intake/confirm", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({rows: ready, patient: reviewPatient})
+  })).json();
+
+  renderTurn("create the cases from this report", data.message, []);
+  say(data.message);
+  (data.created || []).forEach(c => logActivity("created " + c.case_id + " from the report"));
+
+  // Rows that were created leave the table; anything refused stays, with why.
+  const refused = new Set((data.skipped || []).map(s => s.test_name));
+  reviewRows = reviewRows.filter(r => !r.ok || refused.has(r.test_name));
+  reviewRows.forEach(r => {
+    const problem = (data.skipped || []).find(s => s.test_name === r.test_name);
+    if (problem){ r.ok = false; r.issues = [problem.why]; }
+  });
+  renderReview();
+  $("intake-note").textContent = data.message;
+  await refreshBoard();
+  if (data.created && data.created.length) openCase(data.created[0].case_id);
+}
+
+$("btn-escalate").addEventListener("click", () => { if (selected) doEscalate(selected, false); });
+$("btn-review").addEventListener("click", () => { if (selected) ask("mark " + selected + " reviewed"); });
+
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!Recognition){
+  $("listen").disabled = true;
+  $("listen").textContent = "Speech not supported here";
+} else {
+  const recognition = new Recognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
+  let listening = false;
+  const start = () => {
+    if (listening) return;
+    listening = true;
+    $("listen").classList.add("listening");
+    $("listen").textContent = "Listening";
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    recognition.start();
+  };
+  const stop = () => {
+    if (!listening) return;
+    listening = false;
+    $("listen").classList.remove("listening");
+    $("listen").textContent = "Hold to speak";
+    recognition.stop();
+  };
+  $("listen").addEventListener("mousedown", start);
+  $("listen").addEventListener("touchstart", e => { e.preventDefault(); start(); });
+  ["mouseup","mouseleave","touchend"].forEach(ev => $("listen").addEventListener(ev, stop));
+  $("listen").addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") start(); });
+  $("listen").addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") stop(); });
+  recognition.addEventListener("result", e => ask(e.results[0][0].transcript));
+  recognition.addEventListener("end", stop);
+  recognition.addEventListener("error", stop);
+}
+
+fetch("/api/health").then(r => r.json()).then(d => {
+  $("brain").innerHTML = "Engine <b>" + (d.brain === "bedrock" ? "Bedrock" : "deterministic") + "</b>";
+}).catch(() => {});
+loadWorkflow();
+refreshBoard();
+</script>
+</body>
+</html>

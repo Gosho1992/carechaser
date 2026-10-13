@@ -1,0 +1,511 @@
+# CareChaser — Generic Clinical Laboratory Result Workflow
+# Version: 0.1
+#
+# PURPOSE
+# This file is a GENERIC PROJECT MODEL, not the official workflow or policy
+# of any one hospital. It is designed to represent a common end-to-end
+# diagnostic-result lifecycle across different healthcare settings.
+#
+# IMPORTANT
+# - The stages and roles below are synthesized from international guidance
+#   and published studies from the US, UK/Europe, Asia, Australia, and WHO.
+# - SLA values marked as "project defaults" are demo/engineering thresholds,
+#   NOT universal clinical standards. Real hospitals must replace them with
+#   their own approved policies and urgency-specific rules.
+# - Critical/urgent results require much faster, site-specific escalation.
+# - CareChaser tracks workflow completion; it does NOT interpret results,
+#   diagnose patients, or decide treatment.
+
+workflow:
+  name: "Clinical Laboratory Result Closed-Loop Workflow"
+  version: "0.1"
+  scope: "Generic hospital / clinic laboratory-result workflow"
+  project_note: >
+    This workflow is a synthetic, generalized model created only for the
+    CareChaser project. It is not a representation of the official policy
+    of Musafah Surgical Hospital or any other named hospital.
+
+  design_principle: >
+    Track each diagnostic case from order through closure, with an explicit
+    owner, elapsed time, next action, legal transitions, and escalation path.
+
+  engine_settings:
+    sla_calculation_mode: "relative_to_state_entry"
+    timezone_default: "Asia/Karachi"
+
+
+  # Who currently holds each role. Site-specific; expected to change often.
+  # In a real deployment this belongs in the database, not in this file.
+  # An unassigned role falls back to its display name, so escalation always
+  # produces an auditable target and the engine never invents a person.
+  roster:
+    ordering_clinician: "Dr. Khan"
+    responsible_clinician: "Dr. Khan"
+    clinical_team_lead: "Dr. Iqbal"
+    authorized_sample_collector: "Nurse Ayesha"
+    ward_supervisor: "Sr. Nurse Fatima"
+    laboratory_team: "Lab Desk"
+    authorized_laboratory_reviewer: "Mr. Tariq"
+    lab_supervisor: "Dr. Saleem"
+    covering_clinician: "Dr. Riaz"
+    clinical_supervisor: "Dr. Mahmood"
+    responsible_care_team: "Ward 2 Care Team"
+    system: "CareChaser"
+
+  states:
+
+    - state: ordered
+      display_name: "Test Ordered"
+      next_states:
+        - sample_collected
+        - cancelled
+        - closed
+
+      event_targets:
+        sample_collected: sample_collected
+        cancel: cancelled
+      owner_role: "authorized_sample_collector"
+      sla_hours: 24
+      sla_basis: "Project default; replace with local collection/scheduling policy."
+      escalate_to_role: "clinical_team_lead"
+      escalate_after_hours: 24
+      completion_evidence:
+        - "Valid test order exists"
+        - "Patient and requested test are correctly identified"
+      stuck_when:
+        - "Order remains uncollected beyond the applicable local timeframe"
+        - "Order cannot proceed because required information is missing"
+      notes: >
+        Ordering is the start of the diagnostic testing process. Orders may
+        be electronic or paper depending on the setting.
+
+    - state: sample_collected
+      display_name: "Sample Collected"
+      next_states:
+        - sample_processed
+        - cancelled
+        - closed
+
+      event_targets:
+        sample_received: sample_processed
+        cancel: cancelled
+      owner_role: "laboratory_team"
+      sla_hours: 4
+      sla_basis: "Project default; actual collection timing depends on test and setting."
+      escalate_to_role: "ward_supervisor"
+      escalate_after_hours: 4
+      completion_evidence:
+        - "Specimen collected"
+        - "Patient/specimen identity verified"
+        - "Collection time recorded"
+      stuck_when:
+        - "Ordered test has not reached collection"
+        - "Collection failed and no repeat/next action is documented"
+      notes: >
+        WHO laboratory guidance emphasizes correct patient identification,
+        collection, labeling, transport, and traceability.
+
+    - state: sample_processed
+      display_name: "Sample Received / Processed"
+      next_states:
+        - result_produced
+        - sample_collected
+        - cancelled
+        - closed
+
+      event_targets:
+        result_released: result_produced
+        sample_rejected: sample_collected
+        cancel: cancelled
+      owner_role: "laboratory_team"
+      sla_hours: 8
+      sla_basis: "Project default for demo purposes; laboratory turnaround varies by test."
+      escalate_to_role: "lab_supervisor"
+      escalate_after_hours: 8
+      completion_evidence:
+        - "Specimen received by laboratory"
+        - "Specimen accepted or rejection reason recorded"
+        - "Testing/processing initiated or completed"
+      stuck_when:
+        - "Specimen is received but processing has not progressed within the applicable timeframe"
+        - "Specimen is rejected but the next action is not documented"
+      notes: >
+        WHO guidance describes sample reception, acceptance/rejection,
+        registration, processing, and traceability as core laboratory steps.
+
+    - state: result_produced
+      display_name: "Result Released / Awaiting Clinician Review"
+      next_states:
+        - result_reviewed
+        - cancelled
+        - closed
+
+      event_targets:
+        result_reviewed: result_reviewed
+        cancel: cancelled
+      owner_role: "responsible_clinician"
+      sla_hours: 24
+      sla_basis: "Project default for routine/non-critical clinician review; local policy controls."
+      escalate_to_role: "covering_clinician"
+      escalate_after_hours: 24
+      completion_evidence:
+        - "Result is recorded"
+        - "Required laboratory validation/authorization is complete"
+        - "Final report is released to the appropriate recipient/system"
+      stuck_when:
+        - "Testing is complete but final result has not been released"
+        - "Result requires validation/authorization and remains pending"
+      notes: >
+        WHO guidance distinguishes result recording, review/authorization,
+        reporting, and notification of urgent or critical results.
+
+    - state: result_reviewed
+      display_name: "Result Reviewed by Responsible Clinician"
+      next_states:
+        - patient_informed
+        - closed
+        - cancelled
+      event_targets:
+        patient_informed: patient_informed
+        close: closed
+        cancel: cancelled
+      owner_role: "responsible_care_team"
+      sla_hours: 24
+      sla_basis: "Project default for post-review follow-up; local policy controls."
+      escalate_to_role: "covering_clinician"
+      escalate_after_hours: 24
+      completion_evidence:
+        - "Responsible clinician accessed/reviewed the result"
+        - "Required clinical interpretation or acknowledgement is documented"
+        - "Any required next action is recorded"
+      stuck_when:
+        - "Result is available but no responsible clinician review is documented"
+        - "Responsible clinician is unavailable and no covering owner is assigned"
+      notes: >
+        Published US and UK guidance identifies review, action, and clear
+        responsibility as important parts of closing the testing loop.
+
+    - state: patient_informed
+      display_name: "Patient Informed / Follow-up Arranged"
+      next_states:
+        - closed
+        - cancelled
+      event_targets:
+        close: closed
+        cancel: cancelled
+      owner_role: "responsible_care_team"
+      sla_hours: 24
+      sla_basis: "Project default; patient communication timing depends on result urgency."
+      escalate_to_role: "clinical_supervisor"
+      escalate_after_hours: 24
+      completion_evidence:
+        - "Patient communication is documented when communication is required"
+        - "Follow-up appointment, repeat test, referral, or other next step is documented when required"
+        - "If communication is not required, the responsible clinician records the reason"
+      stuck_when:
+        - "Result has been reviewed but required patient communication is not documented"
+        - "A follow-up action is required but no next step/owner is recorded"
+      notes: >
+        Patient notification and follow-up are explicit components of the
+        testing process in AHRQ and NHS guidance.
+
+    - state: cancelled
+      display_name: "Workflow Cancelled"
+      owner_role: "responsible_care_team"
+      terminal: true
+      sla_hours: 0
+      sla_basis: "Terminal state; cancellation is an explicit workflow outcome."
+      escalate_to_role: "clinical_supervisor"
+      escalate_after_hours: 0
+      next_states: []
+      event_targets: {}
+      completion_evidence:
+        - "Cancellation reason is recorded"
+        - "Cancellation is attributable to an authorized actor"
+      stuck_when: []
+      notes: >
+        Cancellation is distinct from successful closure. Examples include a
+        clinician-cancelled order, duplicate order, or patient non-attendance.
+
+    - state: closed
+      display_name: "Workflow Closed"
+      next_states: []
+      event_targets: {}
+      owner_role: "system"
+      terminal: true
+      sla_hours: 0
+      sla_basis: "Project default; closure criteria must be defined locally."
+      escalate_to_role: null
+      escalate_after_hours: null
+      completion_evidence:
+        - "Required review completed"
+        - "Required patient communication completed or documented as not required"
+        - "Required follow-up/action completed or transferred to a separately tracked workflow"
+      stuck_when: []
+      notes: >
+        Terminal state: no timer runs and the case is never reported stuck.
+        Closure is included because the purpose of CareChaser is not merely
+        to show that a result exists, but to make the diagnostic workflow
+        auditable through completion.
+
+  roles:
+    ordering_clinician:
+      display_name: "Ordering Clinician"
+    clinical_team_lead:
+      display_name: "Clinical Team / Ordering Service"
+    authorized_sample_collector:
+      display_name: "Nursing / Phlebotomy / Authorized Sample Collector"
+    ward_supervisor:
+      display_name: "Ward / Clinic Supervisor"
+    laboratory_team:
+      display_name: "Laboratory Team"
+    lab_supervisor:
+      display_name: "Laboratory Supervisor / Authorized Reviewer"
+    authorized_laboratory_reviewer:
+      display_name: "Laboratory Scientist / Authorized Laboratory Reviewer"
+    responsible_clinician:
+      display_name: "Ordering / Responsible Clinician"
+    covering_clinician:
+      display_name: "Covering Clinician / Clinical Supervisor"
+    responsible_care_team:
+      display_name: "Responsible Clinician / Care Team"
+    clinical_supervisor:
+      display_name: "Clinical Supervisor / Responsible Care Team"
+    system:
+      display_name: "System"
+
+  urgency_overrides:
+    note: >
+      These are examples of how the workflow can support urgency-specific
+      rules. They are NOT universal clinical thresholds.
+    critical_result:
+      applies_to: "Results classified as critical/urgent under the local hospital policy."
+      result_notification:
+        sla_hours: 0.17
+        basis: >
+          Example only: Singapore's National University Hospital described
+          a critical-result alert system that escalated when acknowledgement
+          did not occur within 10 minutes. Other hospitals may use different
+          thresholds.
+      clinician_review:
+        sla_hours: 0.17
+        basis: "Example/demo value only; replace with local critical-result policy."
+      escalation:
+        enabled: true
+        rule: "If acknowledgement is not documented within the locally defined critical-result window, escalate to the next responsible clinician."
+    routine_result:
+      applies_to: "Non-critical routine results."
+      use_default_state_slas: true
+
+  ownership_rules:
+    - rule: "Every active result must have a current responsible owner."
+    - rule: "If the named owner is unavailable, a covering owner must be assigned."
+    - rule: "A result should not remain unowned because the original clinician is absent, has rotated, or has transferred responsibility."
+    - rule: "Escalation changes the responsible escalation target; it does not change the clinical meaning of the result."
+
+  tracking_requirements:
+    minimum_fields:
+      - "case_id"
+      - "patient_id_or_local_identifier"
+      - "test_type"
+      - "ordering_clinician"
+      - "current_owner"
+      - "current_state"
+      - "state_entered_at"
+      - "last_action_at"
+      - "next_action"
+      - "escalation_target"
+      - "result_urgency"
+      - "closure_status"
+    acceptable_tracking_channels:
+      - "Electronic Health Record / Hospital Information System"
+      - "Laboratory Information System"
+      - "Paper/register workflow"
+      - "Approved spreadsheet or tracking list"
+      - "Approved secure messaging/workflow system"
+    note: >
+      The project should not assume that every hospital uses the same
+      technology. WHO and NHS materials explicitly describe electronic and
+      paper/manual continuity arrangements.
+
+  carechaser_boundaries:
+    carechaser_can:
+      - "Track workflow state and timestamps"
+      - "Identify overdue/stuck transitions"
+      - "Identify the current owner"
+      - "Identify missing evidence of completion"
+      - "Apply configured escalation rules"
+      - "Draft administrative follow-up messages"
+      - "Explain why a workflow is considered stuck"
+    carechaser_must_not:
+      - "Diagnose a patient"
+      - "Interpret a laboratory result as medical advice"
+      - "Choose treatment"
+      - "Change a clinician's medical decision"
+      - "Invent a missing result"
+      - "Declare a clinical emergency solely from an AI-generated interpretation"
+
+# RESEARCH BASIS
+#
+# The workflow was generalized from the following sources. These sources
+# support the existence of the lifecycle and responsibility/follow-up
+# concepts, but they do NOT establish the project's default SLA values.
+
+sources:
+
+  - id: "WHO_SMART_LIS"
+    region: "International / WHO"
+    title: "WHO SMART Base — Laboratory Information System"
+    url: "https://smart.who.int/base/ActorDefinition-DAK.Persona.System.LIS.html"
+    supports:
+      - "laboratory test orders"
+      - "specimen tracking"
+      - "sample processing"
+      - "result production"
+      - "result reporting"
+      - "transmission of results to healthcare providers/persons"
+
+  - id: "WHO_LQSI_RESULTS"
+    region: "International / WHO"
+    title: "WHO Laboratory Quality Stepwise Implementation — Recording, Reporting and Archiving of Results"
+    url: "https://extranet.who.int/lqsi/node/147"
+    supports:
+      - "recording results"
+      - "reviewing and authorizing results"
+      - "reporting results"
+      - "immediate notification for urgent/critical results"
+      - "notification when turnaround time is exceeded"
+
+  - id: "WHO_LQSI_SAMPLE"
+    region: "International / WHO"
+    title: "WHO Laboratory Quality Stepwise Implementation — Sample Reception and Processing"
+    url: "https://extranet.who.int/lqsi/content/develop-sop-sample-reception-and-processing-and-start-registering-all-samples-received"
+    supports:
+      - "sample reception"
+      - "sample acceptance/rejection"
+      - "laboratory registration"
+      - "processing"
+      - "traceability"
+
+  - id: "AHRQ_LAB"
+    region: "United States"
+    title: "AHRQ — Improving Your Laboratory Testing Process"
+    url: "https://www.ahrq.gov/hai/tools/ambulatory-care/lab-testing-toolkit.html"
+    supports:
+      - "testing process from ordering through patient notification"
+      - "follow-up determination"
+      - "process mapping across provider, staff, and laboratory roles"
+
+  - id: "AHRQ_CLOSING_LOOP"
+    region: "United States"
+    title: "AHRQ — Diagnostic Error in the Testing Process / Closing the Loop"
+    url: "https://www.ahrq.gov/diagnostic-safety/resources/issue-briefs/dxsafety-current-state3.html"
+    supports:
+      - "test ordering and processing"
+      - "interpreting and managing results"
+      - "closing the loop on follow-up and communication"
+      - "result acknowledgement/action"
+      - "patient communication"
+
+  - id: "NHS_RESULTS"
+    region: "United Kingdom / Europe"
+    title: "NHS England — Clinical Messaging and Test Results"
+    url: "https://www.england.nhs.uk/long-read/clinical-messaging-and-test-results/"
+    supports:
+      - "tracking test results"
+      - "prompt result review"
+      - "actioning abnormal results"
+      - "absence/cover arrangements"
+      - "patient communication"
+      - "paper/manual continuity when systems fail"
+
+  - id: "NHS_IMAGING"
+    region: "United Kingdom / Europe"
+    title: "NHS England — Guidance on patient digital notification of diagnostic imaging reports"
+    url: "https://www.england.nhs.uk/long-read/guidance-on-patient-digital-notification-of-diagnostic-imaging-reports/"
+    supports:
+      - "referrer responsibility for reviewing results"
+      - "acting on results"
+      - "communicating results"
+
+  - id: "NUH_SINGAPORE"
+    region: "Singapore / Asia"
+    title: "Singapore Ministry of Health — National Clinical Excellence Team Award: Critical Lab Result Alert System"
+    url: "https://www.moh.gov.sg/newsroom/national-medical-excellence-awards-2012-celebrating-our-best-medical-talent/"
+    supports:
+      - "critical result notification"
+      - "clinician acknowledgement"
+      - "manual escalation to another clinical level when acknowledgement is missing"
+    caution: >
+      The 10-minute escalation example is specific to the described
+      Singapore system and must not be treated as a universal SLA.
+
+  - id: "INDIA_DGHS"
+    region: "India / Asia"
+    title: "DGHS / Ministry of Health and Family Welfare — Hospital Manual"
+    url: "https://vmmc-sjh.mohfw.gov.in/sites/default/files/Hospital_Manual%2C_April_2025%2C_DGHS%2C_MoHFW%20-%2001.04.2025.pdf"
+    supports:
+      - "laboratory report dispatch"
+      - "ward/OPD nurse receiving reports"
+      - "HIS retrieval where available"
+      - "written laboratory requisition"
+      - "expedited emergency testing"
+
+  - id: "AU_PATHOLOGY"
+    region: "Australia / Asia-Pacific"
+    title: "Australian Government Department of Health — About Pathology"
+    url: "https://www.health.gov.au/topics/pathology/about-pathology"
+    supports:
+      - "test request"
+      - "sample collection"
+      - "laboratory testing"
+      - "results returned to requesting doctor/health professional"
+      - "doctor review and follow-up"
+
+  - id: "WHO_WPRO"
+    region: "Western Pacific / Asia-Pacific"
+    title: "WHO Western Pacific — Clinical Diagnostic Stewardship"
+    url: "https://www.who.int/westernpacific/newsroom/events/overview/item/2026/06/24/western-pacific-events/clinical-diagnostic-stewardship---an-integral-component-of-the-national-amr-response"
+    supports:
+      - "ordering"
+      - "specimen collection"
+      - "processing"
+      - "result interpretation/use"
+      - "laboratory-clinician communication"
+      - "delayed turnaround and weak communication as operational gaps"
+
+  - id: "VA_FOLLOWUP"
+    region: "United States"
+    title: "PubMed — Effectiveness of an electronic health record-based intervention to improve follow-up of abnormal pathology results"
+    url: "https://pubmed.ncbi.nlm.nih.gov/22929995/"
+    supports:
+      - "follow-up of abnormal pathology results"
+      - "documented responses such as follow-up tests, referrals, patient notification, and treatment changes"
+      - "local/contextual variation in follow-up performance"
+
+  - id: "TEST_PROCESS_TRACKING"
+    region: "United States / Research"
+    title: "PubMed — Reducing missed laboratory results: defining temporal responsibility and test process tracking"
+    url: "https://pubmed.ncbi.nlm.nih.gov/22195201/"
+    supports:
+      - "tracking tests from order to completion and follow-up"
+      - "explicit responsible agents"
+      - "time frames"
+      - "workflow-management model"
+
+  - id: "EMR_SAFETY"
+    region: "United States"
+    title: "PubMed — Notification of abnormal lab test results in an electronic medical record"
+    url: "https://pubmed.ncbi.nlm.nih.gov/20193832/"
+    supports:
+      - "abnormal-result notification"
+      - "acknowledgement tracking"
+      - "follow-up actions"
+      - "continued safety gaps despite electronic notification"
+
+# IMPLEMENTATION NOTE
+#
+# For the hackathon demo, use synthetic patient/test records only.
+# Do not load real patient identifiers, real medical results, or confidential
+# hospital data into the demo system unless the hospital has explicitly
+# authorized that use and the required privacy/security controls are in place.
