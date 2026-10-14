@@ -1,0 +1,30 @@
+[Unit]
+Description=CareChaser MCP server
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment="CARECHASER_HOST=127.0.0.1"
+Environment="CARECHASER_PORT=8000"
+Environment="CARECHASER_ALLOWED_HOSTS=100-31-163-198.sslip.io"
+
+# No CARECHASER_SIMULATED_NOW. This deployment records real elapsed time:
+# a frozen base date would stamp every case in the operating log with a day
+# that never happened, and nothing afterwards could tell which was which.
+
+# The clock controls are closed while the run is accumulating evidence.
+Environment="CARECHASER_CLOCK_LOCKED=1"
+
+# The instance carries an IAM role so it can reach Textract. build_extractor()
+# and build_brain() only ask whether AWS credentials exist, not whether this
+# account may call a given model, so without this flag they would both pick
+# Bedrock — which returns NOT_AUTHORIZED for every text model here, and
+# extraction would silently yield nothing.
+Environment="CARECHASER_FORCE_OFFLINE=1"
+
+ExecStart=/home/ubuntu/.venv/bin/python /home/ubuntu/carechaser_mcp.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

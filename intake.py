@@ -8,7 +8,12 @@ The boundary that makes this safe to build at all:
 
     CareChaser extracts WHICH tests are on the report and WHETHER each one
     has been done. It never extracts a result value, never decides anything
-    is abnormal, and never sets urgency from clinical content.
+    is abnormal, and never infers urgency from clinical content.
+
+    Urgency is read only where the laboratory has written it as a label —
+    "CRITICAL", "URGENT", "STAT" — because that is the clinical system
+    speaking, not CareChaser forming a view. A report with no such label
+    yields a routine case, whatever numbers are on it.
 
 So "Serum potassium 6.8 mmol/L — result available" yields:
 
@@ -97,13 +102,43 @@ MEASUREMENT_PATTERNS = [
     re.compile(r"\b(?:result|value|level|reading)s?\s*[:=]?\s*\d+(?:\.\d+)?", re.I),
 ]
 
+# Urgency labels a laboratory writes on a report. Matched as whole words so
+# "understated" cannot contain "stat". Nothing is inferred from a value: a
+# potassium of 6.8 is routine here unless the report says otherwise.
+URGENCY_MARKER = re.compile(r"\b(critical|urgent|stat)\b", re.I)
+
 TIME_WORDS = {"hour", "hours", "hr", "hrs", "h", "day", "days", "minute", "minutes", "min"}
 
 # Units left stranded once their number is removed are not part of a name.
 ORPHAN_UNITS = re.compile(
-    r"\b(?:mmol/l|mg/dl|g/dl|iu/l|u/l|mcg|µg|ng/ml|ml|mmol|mg|ref(?:erence)?(?:\s+range)?)\b",
+    r"\b(?:mmol/l|mg/dl|g/dl|iu/l|u/l|miu/l|ng/l|ng/ml|pmol/l|umol/l|µmol/l|"
+    r"x10\^9/l|kpa|mcg|µg|ml|mmol|mg|inr|ref(?:erence)?(?:\s+range)?)\b",
     re.I,
 )
+
+
+def _loose_state(status_text: str) -> Optional[str]:
+    """Map a status that is not an exact phrase, without ever guessing.
+
+    A written status often carries more than one known word: "reviewed,
+    follow-up pending" holds both "reviewed" and "pending", which point at
+    different stages. Taking whichever came first in the dictionary made the
+    answer depend on how the table happened to be typed, and "pending" sits
+    above "reviewed" in it, so every reviewed result was filed as still
+    processing.
+
+    The word the writer led with is the one that describes the case. Ties go
+    to the longer phrase, since "result released" is more specific than
+    "released".
+    """
+    hits = [
+        (status_text.find(phrase), -len(phrase), mapped)
+        for phrase, mapped in STATUS_TO_STATE.items()
+        if phrase in status_text
+    ]
+    if not hits:
+        return None
+    return min(hits)[2]
 
 
 def _is_bare_number(token: str) -> bool:
@@ -151,6 +186,7 @@ class IntakeRow:
     owner_role: Optional[str] = None
     patient: Optional[str] = None
     hours_waiting: float = 0.0
+    urgency: str = "routine"
     issues: list[str] = field(default_factory=list)
 
     @property
@@ -167,6 +203,7 @@ class IntakeRow:
             "owner_role": self.owner_role,
             "patient": self.patient,
             "hours_waiting": self.hours_waiting,
+            "urgency": self.urgency,
             "issues": list(self.issues),
             "ok": self.ok,
         }
@@ -226,9 +263,20 @@ class RuleExtractor:
         except csv.Error:
             return None
 
-    @staticmethod
-    def _patient_in(line: str) -> Optional[str]:
-        match = re.search(r"\bpatient\b[^A-Za-z0-9]*([A-Za-z0-9\-]+)", line, re.I)
+    # "Patient ref: MK-4471", "Patient ID MK-4471", "Patient: MK-4471".
+    # The optional label has to be consumed, or the reference comes back as
+    # the word "ref" and every case carries the same useless identifier.
+    PATIENT = re.compile(
+        r"\bpatient\b\s*(?:ref(?:erence)?|id(?:entifier)?|no\.?|number)?"
+        # A reference must carry a digit, so prose ("Patient was seen") is
+        # not mistaken for one.
+        r"\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]*\d[A-Za-z0-9\-]*)",
+        re.I,
+    )
+
+    @classmethod
+    def _patient_in(cls, line: str) -> Optional[str]:
+        match = cls.PATIENT.search(line)
         return match.group(1) if match else None
 
     def _find_patient(self, text: str) -> Optional[str]:
@@ -238,7 +286,27 @@ class RuleExtractor:
                 return found
         return None
 
+    # A printed lab report leads the eye from the test to its result with a
+    # row of dots. That run of dots is the real separator, and it has to be
+    # tried first: a comma inside "released, not yet acknowledged" would
+    # otherwise split the line in the middle of the status, leaving the value
+    # attached to the test name.
+    DOTTED = re.compile(r"^(.{2,60}?)\s*\.{3,}\s*(.+)$")
+
+    # OCR does not return the dots. Textract reads a printed row as separate
+    # blocks and scan_intake rejoins them with spaces, so on a scanned report
+    # the gap between columns is what survives, not the leader. This has to be
+    # tried before the comma, or "reviewed, follow-up pending" splits the line
+    # in the middle of its own status.
+    COLUMNS = re.compile(r"^(.{2,60}?)\s{2,}(.+)$")
+
     def _split(self, line: str) -> Optional[tuple[str, str]]:
+        for pattern in (self.DOTTED, self.COLUMNS):
+            match = pattern.match(line)
+            if match:
+                left, right = match.group(1).strip(" .-—–:\t|"), match.group(2).strip()
+                if left and right:
+                    return left, right
         for sep in self.SEPARATORS:
             if sep in line:
                 left, _, right = line.partition(sep)
@@ -325,6 +393,10 @@ def validate(
             raw_text=" — ".join(x for x in (raw_name, raw_status) if x),
             removed=removed_fragments(raw_name, name) + removed_fragments(raw_status, status_text),
             patient=patient,
+            # Read from the label the laboratory printed, not from any value.
+            urgency=("critical"
+                     if URGENCY_MARKER.search(f"{raw_name} {raw_status}")
+                     else "routine"),
         )
 
         key = name.lower()
@@ -337,11 +409,7 @@ def validate(
         else:
             state = STATUS_TO_STATE.get(status_text)
             if state is None:
-                # Try a looser match before giving up, but never guess a stage.
-                for phrase, mapped in STATUS_TO_STATE.items():
-                    if phrase in status_text:
-                        state = mapped
-                        break
+                state = _loose_state(status_text)
             if state is None:
                 row.issues.append(f"status '{status_text}' is not one this workflow knows")
             elif state not in startable:

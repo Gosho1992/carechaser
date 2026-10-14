@@ -521,6 +521,15 @@ def apply_event(
         new_owner = event.actor_id
     elif target_state in {"closed", "cancelled"}:
         new_owner = event.actor_id
+    elif new_owner_role != case.current_owner_role:
+        # A handover: the stage now belongs to a different role, so the case
+        # belongs to whoever holds that role. Keeping the previous owner's
+        # name against the new role says a nurse owns a case that is sitting
+        # with the laboratory, and anything reading ownership by name — a
+        # board, a chase, a report of who works when — then reads it wrong.
+        # resolve_role goes to the roster first and the role's display name
+        # second, so no person is ever invented.
+        new_owner = resolve_role(workflow, new_owner_role) or case.current_owner
 
     closure_status = "open"
     if target_state == "closed":

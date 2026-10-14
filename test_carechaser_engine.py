@@ -222,3 +222,67 @@ def test_roster_resolves_role_to_person():
     assert resolve_role(WORKFLOW, "lab_supervisor") == "Dr. Saleem"
     assert resolve_role(WORKFLOW, "not_a_role") == "not_a_role"
     assert resolve_role(WORKFLOW, None) is None
+
+
+# ------------------------------------------- ownership across a handover
+#
+# A stage change often changes which role owns the case. Carrying the
+# previous owner's name into the new role tells the board that a nurse owns
+# a case sitting with the laboratory, and anything that reads ownership by
+# name — a chase, a report of who works when — then reads it wrong.
+
+# A distinct name: a second module-level NOW would shadow the one the tests
+# above rely on, and they would quietly start measuring from the wrong moment.
+HANDOVER_NOW = datetime.fromisoformat("2026-09-28T09:00:00+05:00")
+
+
+def test_a_handover_moves_the_case_to_whoever_holds_the_new_role():
+    case = make_case(
+        current_state="ordered",
+        current_owner="Nurse Ayesha",
+        current_owner_role="authorized_sample_collector",
+    )
+    result = apply_event(
+        case,
+        event(event_type="sample_collected", actor_id="Nurse Ayesha",
+              actor_role="authorized_sample_collector"),
+        WORKFLOW, now=HANDOVER_NOW,
+    )
+
+    assert result.applied
+    assert result.case.current_owner_role == "laboratory_team"
+    assert result.case.current_owner == "Lab Desk", (
+        "the case now belongs to the laboratory, not the nurse who sent it"
+    )
+
+
+def test_the_actor_keeps_the_case_when_the_role_does_not_change():
+    case = make_case(
+        current_state="sample_collected",
+        current_owner="Lab Desk",
+        current_owner_role="laboratory_team",
+    )
+    result = apply_event(
+        case,
+        event(event_type="sample_received", actor_id="Lab Desk",
+              actor_role="laboratory_team"),
+        WORKFLOW, now=HANDOVER_NOW,
+    )
+    assert result.case.current_owner == "Lab Desk"
+
+
+def test_a_handover_never_invents_a_person():
+    """An unassigned role falls back to its display name, never to a guess."""
+    workflow = {**WORKFLOW, "roster": {}}
+    case = make_case(
+        current_state="ordered",
+        current_owner="Nurse Ayesha",
+        current_owner_role="authorized_sample_collector",
+    )
+    result = apply_event(
+        case,
+        event(event_type="sample_collected", actor_id="Nurse Ayesha",
+              actor_role="authorized_sample_collector"),
+        workflow, now=HANDOVER_NOW,
+    )
+    assert result.case.current_owner == "Laboratory Team"

@@ -1,0 +1,95 @@
+{
+  "_comment": "Ground truth for the synthetic ward. insights.py MUST NOT read this file: it exists only so inferred behaviour can be compared with actual behaviour on the Insights page.",
+  "written_at": "2026-10-13T11:51:37.634176+00:00",
+  "timezone": "Asia/Karachi (UTC+05:00)",
+  "clinicians": {
+    "Dr. Khan": {
+      "name": "Dr. Khan",
+      "role": "responsible_clinician",
+      "window": [
+        14,
+        17
+      ],
+      "rate": 0.45,
+      "note": "Operating in the morning; clears results once the list finishes."
+    },
+    "Dr. Ali": {
+      "name": "Dr. Ali",
+      "role": "responsible_clinician",
+      "window": [
+        15,
+        18
+      ],
+      "rate": 0.4,
+      "note": "Later list, so clears later in the afternoon."
+    },
+    "Dr. Ahmed": {
+      "name": "Dr. Ahmed",
+      "role": "responsible_clinician",
+      "window": [
+        8,
+        10
+      ],
+      "rate": 0.35,
+      "note": "Clinic rather than theatre, so reviews during the morning round."
+    },
+    "Dr. Riaz": {
+      "name": "Dr. Riaz",
+      "role": "covering_clinician",
+      "window": [
+        13,
+        19
+      ],
+      "rate": 0.25,
+      "note": "Covering: picks up escalations across a wide window, slowly."
+    },
+    "Lab Desk": {
+      "name": "Lab Desk",
+      "role": "laboratory_team",
+      "window": [
+        8,
+        18
+      ],
+      "rate": 0.6,
+      "note": "Laboratory runs through the working day."
+    },
+    "Nurse Ayesha": {
+      "name": "Nurse Ayesha",
+      "role": "authorized_sample_collector",
+      "window": [
+        7,
+        10
+      ],
+      "rate": 0.7,
+      "note": "Phlebotomy round first thing."
+    },
+    "Ward 2 Care Team": {
+      "name": "Ward 2 Care Team",
+      "role": "responsible_care_team",
+      "window": [
+        11,
+        19
+      ],
+      "rate": 0.35,
+      "note": "Patient communication fits around the ward day."
+    }
+  },
+  "weekday_arrivals": {
+    "0": 1.7,
+    "1": 1.0,
+    "2": 1.0,
+    "3": 1.1,
+    "4": 1.2,
+    "5": 0.4,
+    "6": 0.3
+  },
+  "weekday_clearing": {
+    "0": 0.55,
+    "1": 1.0,
+    "2": 1.0,
+    "3": 0.95,
+    "4": 0.85,
+    "5": 0.3,
+    "6": 0.2
+  }
+}

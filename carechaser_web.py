@@ -150,6 +150,13 @@ async def board() -> dict[str, Any]:
     return await call_tool("get_board_snapshot", {"limit": 50}, MCP_URL)
 
 
+@app.get("/api/insights")
+async def api_insights() -> dict[str, Any]:
+    """What the ward's own history says. Read through the same MCP tool the
+    agent uses, so the page and a spoken answer can never disagree."""
+    return await call_tool("get_insights", {}, MCP_URL)
+
+
 @app.get("/api/case/{case_id}")
 async def case_detail(case_id: str) -> dict[str, Any]:
     return await call_tool("get_case_timeline", {"case_id": case_id}, MCP_URL)

@@ -30,6 +30,36 @@ from typing import Any, Optional
 DEFAULT_OFFSET_PATH = os.environ.get("CARECHASER_CLOCK_FILE", "demo_clock.json")
 
 
+class ClockLocked(ValueError):
+    """Raised when the clock may not be moved.
+
+    Subclasses ValueError so existing callers that already handle a refused
+    advance keep working.
+    """
+
+
+def locked() -> bool:
+    """True while this deployment is recording real elapsed time.
+
+    During an operating run the audit log is evidence, and one press of
+    "+1 day" would silently date every later entry into a future that never
+    happened. There is no way to tell afterwards which timestamps were real,
+    so the controls are closed rather than trusted.
+
+    Set CARECHASER_CLOCK_LOCKED=1 on a server that is accumulating real
+    history. Leave it unset for the seeded demo, where moving time forward is
+    the whole point.
+    """
+    return os.environ.get("CARECHASER_CLOCK_LOCKED", "").strip() not in ("", "0", "false", "False")
+
+
+LOCK_MESSAGE = (
+    "The clock is locked: this deployment is recording real elapsed time, and "
+    "moving it would date the audit log into a future that never happened. "
+    "The seeded demo has the clock controls open."
+)
+
+
 def _parse(value: str) -> datetime:
     text = value.strip()
     if text.endswith("Z"):
@@ -45,6 +75,7 @@ class ClockState:
     base: Optional[datetime]
     offset_hours: float
     now: datetime
+    locked: bool = False
 
     @property
     def simulated(self) -> bool:
@@ -56,6 +87,7 @@ class ClockState:
             "base": self.base.isoformat() if self.base else None,
             "offset_hours": self.offset_hours,
             "simulated": self.simulated,
+            "locked": self.locked,
         }
 
 
@@ -84,7 +116,12 @@ class DemoClock:
         return base + timedelta(hours=self.offset_hours())
 
     def state(self) -> ClockState:
-        return ClockState(base=self.base(), offset_hours=self.offset_hours(), now=self.now())
+        return ClockState(
+            base=self.base(),
+            offset_hours=self.offset_hours(),
+            now=self.now(),
+            locked=locked(),
+        )
 
     # ------------------------------------------------------------ writing
 
@@ -112,17 +149,23 @@ class DemoClock:
         future, which the engine rejects as impossible. A judge who wants an
         earlier time resets instead.
         """
+        if locked():
+            raise ClockLocked(LOCK_MESSAGE)
         if hours <= 0:
             raise ValueError("The demo clock only moves forward. Use reset to start over.")
         return self._write(self.offset_hours() + hours)
 
     def reset(self) -> ClockState:
+        if locked():
+            raise ClockLocked(LOCK_MESSAGE)
         return self._write(0.0)
 
 
 def describe(state: ClockState) -> str:
     """One speakable line about where the demo clock is."""
     stamp = state.now.strftime("%A %d %B, %H:%M")
+    if state.locked:
+        return f"Real elapsed time, {stamp}. The clock is locked for this run."
     if not state.simulated:
         return f"Using the real clock: {stamp}."
     if state.offset_hours == 0:

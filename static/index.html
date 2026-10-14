@@ -36,6 +36,48 @@
   .clock strong{font-size:16px;font-weight:600}
   .clock .note{color:var(--muted);font-size:13px;margin-left:8px}
   .row-buttons{display:flex;gap:7px;flex-wrap:wrap}
+  /* An explicit display beats the browser's [hidden] rule on specificity,
+     so hiding the locked clock controls needs saying outright. */
+  [hidden]{display:none !important}
+  /* ---- Insights -------------------------------------------------------
+     Three readings of the audit trail. One measure each, one hue each: no
+     dual axes, no rainbow, no colour carrying meaning on its own. Anything
+     with too few observations is labelled thin rather than drawn boldly. */
+  .ins-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;
+    justify-content:space-between;padding:0 16px 10px}
+  .ins-lead{font-size:15px;font-weight:600;max-width:60ch}
+  .ins-meta{color:var(--muted);font-size:12px}
+  .ins-block{padding:4px 16px 18px}
+  .ins-block h3{font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+    color:var(--muted);margin:14px 0 8px;font-weight:600}
+  .ins-row{display:grid;grid-template-columns:190px 1fr 92px;gap:10px;
+    align-items:center;margin-bottom:6px;font-size:13px}
+  .ins-row .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ins-row .fig{text-align:right;font-variant-numeric:tabular-nums;
+    font-size:12px;color:var(--muted)}
+  .bar{position:relative;height:16px;background:var(--slip);border-radius:3px}
+  .bar i{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--ink);
+    display:block}
+  .bar i.over{background:var(--late)}
+  .bar u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--muted);
+    text-decoration:none}
+  .thin{opacity:.55}
+  .thin-tag{font-size:11px;color:var(--muted);margin-left:6px}
+  .hm{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center;
+    margin-bottom:5px}
+  .hm .cells{display:grid;grid-template-columns:repeat(24,1fr);gap:1px}
+  .hm .cells b{height:17px;border-radius:2px;background:var(--slip);display:block}
+  .hm .cells b.win{outline:1.5px solid var(--ink);outline-offset:-1.5px}
+  .hm-scale{display:grid;grid-template-columns:150px 1fr;gap:10px;
+    font-size:10px;color:var(--muted);margin-top:2px}
+  .hm-scale span{display:grid;grid-template-columns:repeat(24,1fr);gap:1px}
+  .ins-note{font-size:12px;color:var(--muted);padding:2px 16px 0;max-width:72ch}
+  .ins-empty{padding:12px 16px 18px;color:var(--muted);font-size:13px}
+  @media (max-width:720px){
+    .ins-row{grid-template-columns:120px 1fr 72px}
+    .hm,.hm-scale{grid-template-columns:96px 1fr}
+  }
+
 
   button{font:inherit;cursor:pointer;border:1px solid var(--ink);background:var(--ink);
     color:var(--card);padding:10px 18px;border-radius:999px}
@@ -181,10 +223,10 @@
 
 <section class="clock" aria-live="polite">
   <div>
-    <span class="label">Demo clock</span>
+    <span class="label" id="clock-label">Demo clock</span>
     <strong id="clock-now" class="mono">—</strong><span class="note" id="clock-note"></span>
   </div>
-  <div class="row-buttons">
+  <div class="row-buttons" id="clock-controls">
     <button class="ghost small" data-advance="1">+1 hour</button>
     <button class="ghost small" data-advance="24">+1 day</button>
     <button class="ghost small" data-advance="72">+3 days</button>
@@ -284,6 +326,22 @@
   </div>
 </div>
 
+
+<section class="panel" id="insights-panel">
+  <h2>What the history says <span>counted from the audit trail</span></h2>
+  <div class="ins-head">
+    <div class="ins-lead" id="ins-headline">Reading the history…</div>
+    <div class="ins-meta" id="ins-meta"></div>
+  </div>
+  <div id="ins-body"></div>
+  <p class="ins-note">
+    Every figure here is counted from recorded timestamps. Nothing is predicted and
+    nothing is clinical: these are statements about a workflow, not about patients.
+    A pattern with fewer than eight observations is marked thin and should not be
+    acted on yet.
+  </p>
+</section>
+
 <footer>
   CareChaser reports workflow status only. It does not interpret results, diagnose,
   or recommend treatment. Urgency is supplied by the clinical system, never decided here.
@@ -328,8 +386,15 @@ async function refreshBoard(){
   const when = new Date(data.clock.now);
   $("clock-now").textContent = when.toLocaleString(undefined,
     {weekday:"long", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"});
-  $("clock-note").textContent = data.clock.offset_hours
-    ? "moved forward " + data.clock.offset_hours + "h" : "";
+  // A locked clock means this deployment is recording real elapsed time, so
+  // the controls are hidden rather than left to fail: pressing one would
+  // suggest the board can be fast-forwarded when it cannot.
+  const locked = !!data.clock.locked;
+  $("clock-label").textContent = locked ? "Elapsed time" : "Demo clock";
+  $("clock-controls").hidden = locked;
+  $("clock-note").textContent = locked
+    ? "recording real time \u2014 controls locked for this run"
+    : (data.clock.offset_hours ? "moved forward " + data.clock.offset_hours + "h" : "");
 
   $("n-stuck").textContent = data.counts.stuck;
   $("n-crit").textContent  = data.counts.critical_stuck;
@@ -339,7 +404,9 @@ async function refreshBoard(){
   const queue = $("queue");
   if (!data.cases.length){
     queue.className = "empty";
-    queue.textContent = "Nothing is stuck. Move the clock forward, or create a case below.";
+    queue.textContent = locked
+      ? "Nothing is stuck right now."
+      : "Nothing is stuck. Move the clock forward, or create a case below.";
     $("queue-note").textContent = "";
     return;
   }
@@ -556,6 +623,129 @@ async function moveClock(hours){
 }
 document.querySelectorAll("[data-advance]").forEach(btn =>
   btn.addEventListener("click", () => moveClock(Number(btn.dataset.advance))));
+
+// ---- Insights ------------------------------------------------------------
+// Three readings, one measure each. Bars for magnitude, a single-hue heatmap
+// for when-of-day. Counts come from the server already aggregated; this only
+// draws them.
+const HOUR_TICKS = [0,3,6,9,12,15,18,21];
+
+function esc(text){
+  return String(text).replace(/[&<>"]/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+}
+
+function barRow(name, value, limit, scaleMax, figure, confident){
+  // The filled part is the median; the part past the limit is drawn in the
+  // overdue colour so lateness reads without needing the legend.
+  const pct = v => Math.max(0, Math.min(100, (v / scaleMax) * 100));
+  const over = limit != null && value > limit;
+  const fill = over
+    ? `<i style="width:${pct(limit)}%"></i>`
+      + `<i class="over" style="left:${pct(limit)}%;width:${pct(value-limit)}%"></i>`
+    : `<i style="width:${pct(value)}%"></i>`;
+  const mark = limit != null ? `<u style="left:${pct(limit)}%"></u>` : "";
+  return `<div class="ins-row${confident ? "" : " thin"}">
+    <span class="nm" title="${esc(name)}">${esc(name)}</span>
+    <span class="bar">${fill}${mark}</span>
+    <span class="fig">${esc(figure)}</span>
+  </div>`;
+}
+
+function heatRow(person){
+  const counts = person.hours || {};
+  const peak = Math.max(1, ...Object.values(counts));
+  const win = person.window;
+  let cells = "";
+  for (let h = 0; h < 24; h++){
+    const n = counts[h] || 0;
+    // Single hue, light to dark. Magnitude is the only thing colour says.
+    const alpha = n ? (0.18 + 0.82 * (n / peak)).toFixed(2) : 0;
+    const inWindow = win && (win[0] <= win[1]
+      ? (h >= win[0] && h < win[1])
+      : (h >= win[0] || h < win[1]));
+    const style = n
+      ? `background:color-mix(in srgb, var(--live) ${Math.round(alpha*100)}%, var(--slip))`
+      : "";
+    cells += `<b class="${inWindow ? "win" : ""}" style="${style}" `
+      + `title="${esc(person.person)} · ${String(h).padStart(2,"0")}:00 · `
+      + `${n} cleared"></b>`;
+  }
+  return `<div class="hm${person.confident ? "" : " thin"}">
+    <span class="nm" title="${esc(person.person)}">${esc(person.person)}`
+    + (person.confident ? "" : `<span class="thin-tag">thin</span>`)
+    + `</span><span class="cells">${cells}</span></div>`;
+}
+
+function renderInsights(data){
+  $("ins-headline").textContent = data.headline || "";
+  $("ins-meta").textContent =
+    `${data.days_observed} days · ${data.cases} cases · `
+    + `${data.stages_completed} completed stages`;
+
+  const body = $("ins-body");
+  if (!data.stages_completed){
+    body.innerHTML = `<p class="ins-empty">No stage has been completed yet.
+      The charts appear as the ward works.</p>`;
+    return;
+  }
+
+  // 1. Where the time goes.
+  const stageMax = Math.max(...data.stages.map(r =>
+    Math.max(r.median_hours, r.sla_hours || 0))) || 1;
+  const stages = data.stages.map(r => barRow(
+    r.display_name,
+    r.median_hours,
+    r.sla_hours,
+    stageMax,
+    `${r.median_hours}h · ${r.breached}/${r.n} late`,
+    r.confident
+  )).join("");
+
+  // 2. When each person clears work.
+  const people = (data.people || []).map(heatRow).join("");
+  let ticks = "";
+  for (let h = 0; h < 24; h++){
+    ticks += `<b>${HOUR_TICKS.includes(h) ? String(h).padStart(2,"0") : ""}</b>`;
+  }
+
+  // 3. Which weekday backs up.
+  const days = (data.weekdays || []).filter(r => r.n);
+  const dayMax = Math.max(1, ...days.map(r => r.breached));
+  const weekdays = days.map(r => barRow(
+    r.name, r.breached, null, dayMax,
+    `${r.breached}/${r.n} late`, r.confident
+  )).join("");
+
+  body.innerHTML = `
+    <div class="ins-block">
+      <h3>Where the time goes</h3>
+      ${stages}
+      <p class="ins-note" style="padding-left:0">Bar is the median time a case
+      spends in that stage; the mark is the stage's limit, and anything past it
+      is drawn in red. Ranked by share of its own limit.</p>
+
+      <h3>When each person clears work</h3>
+      ${people || '<p class="ins-empty" style="padding:0">Nobody has completed a stage yet.</p>'}
+      <div class="hm-scale"><span></span><span>${ticks}</span></div>
+      <p class="ins-note" style="padding-left:0">Darker means more cases cleared in
+      that hour. The outlined run is the narrowest window holding 80% of their
+      work &mdash; inferred from timestamps alone, never configured.</p>
+
+      <h3>Which weekday backs up</h3>
+      ${weekdays || '<p class="ins-empty" style="padding:0">Not enough days yet.</p>'}
+    </div>`;
+}
+
+async function loadInsights(){
+  try {
+    const data = await (await fetch("/api/insights")).json();
+    renderInsights(data);
+  } catch (err) {
+    $("ins-headline").textContent = "Could not read the history.";
+  }
+}
+
 $("clock-reset").addEventListener("click", () => moveClock(null));
 
 async function loadWorkflow(){
@@ -817,6 +1007,10 @@ fetch("/api/health").then(r => r.json()).then(d => {
 }).catch(() => {});
 loadWorkflow();
 refreshBoard();
+loadInsights();
+// The history changes slowly; re-reading it every five minutes is plenty and
+// keeps a long-open page honest without hammering the server.
+setInterval(loadInsights, 5 * 60 * 1000);
 </script>
 </body>
 </html>

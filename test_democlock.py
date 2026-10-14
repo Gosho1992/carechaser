@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import democlock
 from democlock import DemoClock, describe
 
 BASE = "2026-09-28T08:00:00+05:00"
@@ -109,3 +110,76 @@ def test_description_is_speakable(clock):
     assert "moved forward 1 day" in describe(clock.state())
     clock.advance(3)
     assert "1 day and 3 hours" in describe(clock.state())
+
+
+# ------------------------------------------------------------- the lock
+#
+# During an operating run the audit log is evidence. One press of "+1 day"
+# would date every later entry into a future that never happened, and there
+# is no way to tell afterwards which timestamps were real.
+
+
+def test_the_clock_is_unlocked_by_default(monkeypatch):
+    monkeypatch.delenv("CARECHASER_CLOCK_LOCKED", raising=False)
+    assert democlock.locked() is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on"])
+def test_any_non_empty_setting_locks_it(monkeypatch, value):
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", value)
+    assert democlock.locked() is True
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "False"])
+def test_the_off_spellings_leave_it_unlocked(monkeypatch, value):
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", value)
+    assert democlock.locked() is False
+
+
+def test_a_locked_clock_refuses_to_advance(monkeypatch, tmp_path):
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", "1")
+    clock = democlock.DemoClock(tmp_path / "clock.json")
+    with pytest.raises(democlock.ClockLocked, match="recording real elapsed time"):
+        clock.advance(24)
+
+
+def test_a_locked_clock_refuses_to_reset(monkeypatch, tmp_path):
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", "1")
+    clock = democlock.DemoClock(tmp_path / "clock.json")
+    with pytest.raises(democlock.ClockLocked, match="recording real elapsed time"):
+        clock.reset()
+
+
+def test_a_refused_advance_writes_nothing(monkeypatch, tmp_path):
+    path = tmp_path / "clock.json"
+    unlocked = democlock.DemoClock(path)
+    unlocked.advance(5)
+    assert unlocked.offset_hours() == 5.0
+
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", "1")
+    locked_clock = democlock.DemoClock(path)
+    with pytest.raises(democlock.ClockLocked):
+        locked_clock.advance(24)
+    assert locked_clock.offset_hours() == 5.0, "a refusal must not change the offset"
+
+
+def test_a_locked_clock_still_reads_the_time(monkeypatch, tmp_path):
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", "1")
+    clock = democlock.DemoClock(tmp_path / "clock.json")
+    state = clock.state()
+    assert state.locked is True
+    assert state.to_dict()["locked"] is True
+    assert state.now is not None
+
+
+def test_the_spoken_line_says_the_clock_is_locked(monkeypatch, tmp_path):
+    monkeypatch.setenv("CARECHASER_CLOCK_LOCKED", "1")
+    clock = democlock.DemoClock(tmp_path / "clock.json")
+    said = democlock.describe(clock.state())
+    assert "locked" in said.lower()
+    assert "real elapsed time" in said.lower()
+
+
+def test_ClockLocked_is_a_ValueError():
+    """Callers that already handle a refused advance keep working."""
+    assert issubclass(democlock.ClockLocked, ValueError)

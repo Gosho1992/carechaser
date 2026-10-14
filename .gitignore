@@ -25,3 +25,6 @@ Caddyfile
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated ward reports — reproduce with: python ward_sim.py generate
+reports/

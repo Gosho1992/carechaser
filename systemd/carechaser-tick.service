@@ -1,0 +1,11 @@
+[Unit]
+Description=CareChaser ward activity, one half hour
+After=network-online.target carechaser-mcp.service
+Requires=carechaser-mcp.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment="CARECHASER_MCP_URL=http://127.0.0.1:8000/mcp"
+ExecStart=/home/ubuntu/.venv/bin/python /home/ubuntu/ward_sim.py tick

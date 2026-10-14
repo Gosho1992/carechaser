@@ -145,13 +145,15 @@ async def _call(url: str, tool: str, args: dict) -> dict:
 
 
 @pytest.mark.anyio
-async def test_handshake_lists_all_fifteen_tools(server):
+async def test_handshake_lists_every_tool(server):
     async with Client(server) as client:
         assert client.server_info.name == "carechaser"
         # The hackathon requires spec 2025-11-25 or later.
         assert client.protocol_version >= "2025-11-25"
         tools = await client.list_tools()
-        assert {t.name for t in tools.tools} == {
+        names = {t.name for t in tools.tools}
+        assert len(names) == 16, f"tool count changed: {sorted(names)}"
+        assert names == {
             "get_stuck_workflows",
             "get_case_status",
             "get_my_pending",
@@ -167,6 +169,7 @@ async def test_handshake_lists_all_fifteen_tools(server):
             "get_board_snapshot",
             "read_report",
             "confirm_report_rows",
+            "get_insights",
         }
 
 

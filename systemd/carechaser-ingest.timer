@@ -1,0 +1,13 @@
+[Unit]
+Description=Post the morning's reports
+
+[Timer]
+# 02:30 UTC is 07:30 in Karachi, before the ward day starts.
+OnCalendar=*-*-* 02:30:00
+# If the instance was down at 02:30, run as soon as it is back. A missing day
+# in the operating log would be a gap nobody could explain later.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

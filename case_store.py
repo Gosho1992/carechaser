@@ -93,6 +93,11 @@ class CaseStore:
     def __iter__(self) -> Iterator[CaseRecord]:
         return iter(self._cases.values())
 
+    def all_cases(self) -> list[CaseRecord]:
+        """Every case, for code that reads the whole history rather than
+        asking about one case."""
+        return list(self._cases.values())
+
     def get(self, case_id: str) -> CaseRecord:
         case = self._cases.get(str(case_id))
         if case is None:

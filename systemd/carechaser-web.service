@@ -1,0 +1,17 @@
+[Unit]
+Description=CareChaser web client
+After=network.target carechaser-mcp.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment="CARECHASER_WEB_HOST=127.0.0.1"
+Environment="CARECHASER_WEB_PORT=8080"
+Environment="CARECHASER_MCP_URL=http://127.0.0.1:8000/mcp"
+Environment="CARECHASER_FORCE_OFFLINE=1"
+Environment="CARECHASER_CLOCK_LOCKED=1"
+ExecStart=/home/ubuntu/.venv/bin/python /home/ubuntu/carechaser_web.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

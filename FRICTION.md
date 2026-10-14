@@ -247,6 +247,115 @@ test fixture, and nothing in the error output points at the pipe.
 
 ---
 
+## 12. An IAM role for one service silently rewired another
+
+**What I was doing:** attaching an IAM instance role so the EC2 box could call
+Textract, instead of copying access keys onto it.
+
+**What happened:** report extraction started returning zero rows. Nothing
+errored. The ingest job reported `0 proposed, 0 accepted` on files it had read
+successfully a minute earlier.
+
+The cause: `build_extractor()` picks its backend by asking whether *any* AWS
+credentials are reachable. Before the role, there were none, so it used the
+deterministic parser. After the role, there were — so it chose Bedrock, which
+this account cannot call for text models (problem 2), and extraction silently
+produced nothing.
+
+**What it cost:** half an hour, and it would have cost a day if it had happened
+unattended during the operating run.
+
+**The real lesson, which is not AWS's fault:** "are there credentials?" is the
+wrong question. The right one is "can I call this specific model?" — and
+nothing in the SDK makes the second easy to ask cheaply. A `can_invoke(model)`
+probe would be worth having.
+
+**What would have prevented it on the AWS side:** an error, of any kind, when a
+Converse call is made against a model the account is not authorised for. See
+problem 2 — the same missing error, costing time a second time.
+
+---
+
+## 13. Textract does not return dotted leaders
+
+**What I was doing:** feeding generated ward printouts — `Serum potassium
+.......... 6.8 mmol/L` — through Textract and into the parser.
+
+**What happened:** the parser had been taught that a run of dots separates a
+test from its result, which is how printed lab reports are set. Textract does
+not return the dots at all. It reads the row as separate blocks and the
+rejoining step puts them back with spaces, so the separator that survives OCR
+is the column gap, not the leader.
+
+The parser then fell through to its next separator, a comma, and split
+`reviewed, follow-up pending` in the middle of its own status.
+
+**Fix:** match the column gap before the comma. Dots first for pasted text,
+gaps second for scanned text.
+
+**Worth knowing:** this is only visible if you feed real OCR output back
+through the pipeline. A test written against what the generator *produced*
+passed; the bug lived in the gap between what was printed and what came back.
+
+---
+
+## 14. A frozen simulated date nearly invalidated a week of evidence
+
+Not a tool's fault — ours — but the most expensive near-miss of the project, so
+it belongs here.
+
+The deployment carried `CARECHASER_SIMULATED_NOW=2026-09-28T08:00:00+05:00`
+from an earlier demo. Every case on the board was being judged against a date
+two weeks in the past, which is why they all showed several hundred hours
+overdue. Had the seven-day operating run started in that state, every timestamp
+in the evidence would have been fiction, and nothing afterwards could have
+separated the real from the simulated.
+
+Two changes came out of it: the environment variable is gone from the unit
+file with a comment explaining why, and `CARECHASER_CLOCK_LOCKED=1` now makes
+the clock controls refuse while a run is recording.
+
+**The general lesson:** a demo affordance left switched on in production is not
+a cosmetic problem when the product's claim is an auditable record. It is the
+whole product failing quietly.
+
+---
+
+## 15. Deploying file by file is how stale code survives
+
+Three separate bugs this week traced to the same cause: individual `scp` of
+the files that had changed, which left older versions of files that had changed
+*earlier* still running.
+
+The visible symptom was a counter reading "33 open follow-ups" when nothing had
+been chased — a server copy of one module predating the guard that excludes
+provenance entries from outstanding work.
+
+**Fix:** `scp *.py` every time. The whole directory, always.
+
+**Worth knowing:** restarting the service is not optional either. Python holds
+the old module in memory, and a half-deployed system fails in ways that look
+like logic bugs rather than deployment ones.
+
+---
+
+## 16. A residential IP against a pinned security group
+
+Ports 80 and 443 were open to the world; SSH was pinned to a single address, as
+the AWS quick-start wizard sets it up. The ISP rotated the address three times
+in a morning, and each rotation produced an identical `Connection timed out`
+that looks exactly like a dead instance.
+
+Worse, the console refused to save the fix: an unrelated rule had an empty
+Source field, and AWS rejects the whole form while any row is invalid — without
+scrolling to the error. Several save attempts appeared to do nothing at all.
+
+**What would have prevented it:** the save button naming which row is blocking
+it, and a timed-out SSH suggesting the security group rather than leaving the
+user to guess between that, a stopped instance, and a broken key.
+
+---
+
 ## What went well
 
 - **Caddy.** Automatic TLS worked first time, including the certificate for an
@@ -260,3 +369,9 @@ test fixture, and nothing in the error output points at the pipe.
   together with no conversion step.
 - **The MCP Streamable HTTP transport**, once the host allow-list was set,
   has not needed attention since.
+- **Amazon Textract** was the one AWS service that worked first time, on the
+  first call, with no surprises: it took a PDF, returned the text, and the
+  bounding boxes were accurate enough to rebuild a two-column layout from
+  geometry alone.
+- **IAM instance roles.** Six clicks, and no credentials on the server for the
+  rest of the project.

@@ -50,12 +50,13 @@ That rule is enforced in three places, each with its own tests:
 **Streamable HTTP**, built on the MCP Python SDK 2.2. It negotiates protocol
 version **2026-07-28**.
 
-Fifteen tools, grouped:
+Sixteen tools, grouped:
 
 - **Reading** — `get_stuck_workflows`, `get_case_status`, `get_my_pending`,
   `get_followups`, `get_board_snapshot`, `get_case_timeline`
 - **Acting** — `acknowledge_result`, `escalate`, `send_chase`, `create_case`
 - **Intake** — `read_report`, `confirm_report_rows`
+- **Reading the history** — `get_insights`
 - **Demo clock** — `get_demo_clock`, `advance_demo_clock`, `reset_demo_clock`
 
 This is the only way in. The web page does not read the case files and neither
@@ -75,7 +76,8 @@ mishears a case id gets one chance to be corrected before anyone is contacted.
 | --- | --- |
 | **Amazon Bedrock** — `amazon.nova-2-sonic-v1:0` | Speech understanding and spoken reply in the voice chase, over `InvokeModelWithBidirectionalStream` |
 | **Amazon Polly** | Renders the clinician's side of the call as 16 kHz mono PCM, exactly Sonic's input format |
-| **Amazon EC2** | `t3.micro`, Ubuntu 24.04, Elastic IP, Caddy for TLS and basic auth |
+| **Amazon Textract** | Reads scanned ward printouts — image PDFs with no text layer — so a report can be dropped in as it comes off the scanner |
+| **Amazon EC2** | `t3.micro`, Ubuntu 24.04, Elastic IP, Caddy for TLS and basic auth. Textract is reached through an IAM instance role, so no AWS keys live on the server |
 
 `voice_chase.py` closes the loop by voice: it asks the MCP server which case is
 stuck, speaks the chase to Nova 2 Sonic, hears the clinician's reply, decides
@@ -99,9 +101,10 @@ engine is unmoved. A fluent response is not proof that an action occurred.
 python -m pytest -q
 ```
 
-**177 tests**, passing on Windows and Linux. They cover the engine, the case
+**287 tests**, passing on Windows and Linux. They cover the engine, the case
 store, follow-ups, the chase layer and its guardrail, the demo clock, report
-intake, the agent layer, and the MCP server end to end over real HTTP.
+intake, scanned-document reading, the ward simulator, the insights layer, the
+agent, and the MCP server end to end over real HTTP.
 
 Worth running rather than taking on trust. A few that make the point:
 
@@ -116,6 +119,46 @@ Worth running rather than taking on trust. A few that make the point:
 | `test_clock_will_not_rewind` | The demo clock is forward-only, so a case cannot get younger |
 
 ---
+
+## Seven days of operation
+
+CareChaser has been running continuously since **14 October 2026**, on real
+elapsed time, posting a batch of scanned reports each morning and letting a
+synthetic ward clear them through the day.
+
+| | |
+| --- | --- |
+| `ward_sim.py generate` | writes the day's reports as scanned PDFs, 07:30 local |
+| `daily_ingest.py` | Textract reads them, intake strips every value, clean rows become cases |
+| `ward_sim.py tick` | every 30 minutes, each clinician may clear work they own |
+| `insights.py` | reads the audit trail back |
+
+Two systemd timers run it; `systemd/` in this repo holds all six unit files.
+
+**The clock is locked.** `CARECHASER_CLOCK_LOCKED=1` closes the demo controls
+while the run is accumulating evidence: one press of "+1 day" would date every
+later entry into a future that never happened, and nothing afterwards could
+tell which timestamps were real.
+
+### What is simulated, and what is not
+
+The reports are generated and the clinicians are scripted. The arrival volume,
+the clearing hours and the weekday pattern come from per-person profiles in
+`ward_sim.py`, written to `ward_profiles.json`.
+
+Everything downstream is real: real Textract calls on real image PDFs, real
+MCP tool calls, real timestamps, real SLA evaluation, a real append-only audit
+trail accumulating over real days.
+
+**`insights.py` never reads those profiles.** It recovers the pattern from the
+audit trail alone, exactly as it would on a ward where no such file exists, and
+a test fails if the word `ward_profiles`, `ward_sim` or `PROFILES` appears
+anywhere in it. The Insights panel can therefore be checked against the
+generator's actual parameters: the system is told nothing and recovers the
+working hours anyway.
+
+That is the claim worth testing, and it is the reason the run exists rather
+than a seeded fixture.
 
 ## Running it locally
 
@@ -146,12 +189,17 @@ credentials in the environment, and an IAM user carrying **both**
 | `workflow.yaml` | The rules: seven stages, owners, time limits, escalation targets, roster, boundaries, and the fourteen sources the model was generalised from |
 | `carechaser_engine.py` | State machine, SLA evaluation, legal transitions, append-only history |
 | `case_store.py` | JSON-backed store with atomic writes |
-| `carechaser_mcp.py` | The MCP server and its fifteen tools |
+| `carechaser_mcp.py` | The MCP server and its sixteen tools |
 | `carechaser_web.py` + `static/` | FastAPI web client and the command-centre UI |
 | `carechaser_agent.py` | Agent layer: deterministic router, plus a Bedrock Converse path behind a flag |
 | `chase.py` | Drafting, the guardrail, and delivery channels |
 | `followups.py` | Append-only follow-up log — the memory behind the cross-session briefing |
 | `intake.py` | Report → rows, with every clinical value stripped |
+| `scan_intake.py` | Scanned PDFs through Textract, columns rejoined by position on the page |
+| `insights.py` | Reads the audit trail back: where time goes, when people work, which day backs up |
+| `ward_sim.py` | The synthetic ward, and the profiles the insights must recover without seeing |
+| `daily_ingest.py` | The morning job: reports in, tracked cases out |
+| `systemd/` | The six unit files the deployment runs on |
 | `democlock.py` | Simulated clock shared across processes |
 | `voice_chase.py` | The Nova 2 Sonic voice loop |
 | `seed_demo.py` | Nine-case synthetic ward |
@@ -170,7 +218,9 @@ credentials in the environment, and an IAM user carrying **both**
 | Is a case overdue? | Engine, timestamps against `workflow.yaml` |
 | Who is the escalation target? | Roster lookup — the engine never invents a person |
 | Is this transition legal? | State machine |
+| Reading a scanned page | **Amazon Textract** — OCR is a model's job, and it only turns pixels into characters |
 | Report extraction | Regex, so it can be proven that no clinical value survives |
+| Where time goes, who works when | Counted from the audit trail. Nothing predicted, nothing fitted |
 
 **Honest caveat:** the Bedrock *text* path (`BedrockBrain`, `BedrockDrafter`)
 is implemented and tested but disabled in the deployment. The AWS account

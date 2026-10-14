@@ -796,6 +796,31 @@ def create_case(
 
 
 @mcp.tool(
+    title="Read the ward's own history",
+    description=(
+        "What the audit trail shows about how this ward works: where time "
+        "goes, which hours each person clears results in, and which weekday "
+        "backs up. Use for 'where are we losing time', 'when is Dr Khan "
+        "actually free', 'which day is worst', 'when should I chase'. Every "
+        "figure is counted from recorded timestamps, and anything with too "
+        "few observations is reported as thin rather than stated as fact."
+    ),
+)
+def get_insights(limit_people: int = 10) -> dict[str, Any]:
+    """Read the history back. Nothing here is a clinical judgement."""
+    _refresh()
+    import insights as insights_module
+
+    result = insights_module.build(
+        store.all_cases(), store.workflow, now=_now()
+    ).to_dict()
+    result["people"] = result["people"][:limit_people]
+    result["spoken"] = result["headline"]
+    result["ok"] = True
+    return result
+
+
+@mcp.tool(
     title="Get the demo clock",
     description=(
         "What time CareChaser currently thinks it is, and how far the demo "
@@ -821,7 +846,7 @@ def advance_demo_clock(hours: float = 24.0) -> dict[str, Any]:
     try:
         state = clock.advance(hours)
     except ValueError as exc:
-        return {"ok": False, "message": str(exc)}
+        return {"ok": False, "message": str(exc), **clock.state().to_dict()}
 
     stuck = store.stuck_cases(now=state.now)
     return {
@@ -843,7 +868,10 @@ def advance_demo_clock(hours: float = 24.0) -> dict[str, Any]:
     ),
 )
 def reset_demo_clock() -> dict[str, Any]:
-    state = clock.reset()
+    try:
+        state = clock.reset()
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc), **clock.state().to_dict()}
     return {"ok": True, "message": f"Clock reset. {describe_clock(state)}", **state.to_dict()}
 
 

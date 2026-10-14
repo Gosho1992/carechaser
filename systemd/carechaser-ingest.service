@@ -1,0 +1,15 @@
+[Unit]
+Description=CareChaser daily report intake
+# The MCP server is the only way in, so there is nothing to ingest without it.
+After=network-online.target carechaser-mcp.service
+Requires=carechaser-mcp.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment="CARECHASER_MCP_URL=http://127.0.0.1:8000/mcp"
+Environment="AWS_DEFAULT_REGION=us-east-1"
+# No AWS keys here. Textract is reached through the instance's IAM role, so
+# nothing secret lives on disk.
+ExecStart=/home/ubuntu/.venv/bin/python /home/ubuntu/daily_ingest.py

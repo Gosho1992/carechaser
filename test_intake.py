@@ -14,6 +14,7 @@ import pytest
 
 from carechaser_engine import load_workflow
 from intake import (
+    _loose_state,
     RuleExtractor,
     extract_report,
     strip_values,
@@ -256,3 +257,159 @@ def test_raw_text_is_kept_for_review_only():
     row = validate(payload, WORKFLOW)[0]
     assert row.raw_text.startswith("Potassium 6.8")   # shown to the reviewer
     assert row.test_name == "Potassium"               # what the engine gets
+
+
+# ------------------------------------------- printed reports, dotted leaders
+#
+# A real ward printout leads the eye from the test to its result with a row of
+# dots, and writes the status in the same row. Both broke the parser: the dots
+# were kept in the test name, and the comma in "released, not yet
+# acknowledged" split the line in the middle of the status.
+
+
+def test_a_dotted_leader_separates_the_test_from_its_result():
+    pair = RuleExtractor()._split("Thyroid panel ........... TSH 0.2 mIU/L   released")
+    assert pair == ("Thyroid panel", "TSH 0.2 mIU/L   released")
+
+
+def test_a_comma_inside_the_status_does_not_split_the_line():
+    line = "Vitamin B12 ....... 310 ng/L  LOW  released, not yet acknowledged"
+    name, status = RuleExtractor()._split(line)
+    assert name == "Vitamin B12"
+    assert status.startswith("310 ng/L")
+    assert "not yet acknowledged" in status
+
+
+def test_a_printed_report_yields_clean_names_and_real_stages():
+    report = "\n".join([
+        "MUZAFFAR KHAN SURGICAL HOSPITAL",
+        "Patient ref: MK-4631        Date: 13/10/2026",
+        "",
+        "Thyroid panel ........... TSH 0.2 mIU/L   released, not yet acknowledged",
+        "Group and save .......... B Rh positive   requested, awaiting collection",
+    ])
+    result = extract_report(report, WORKFLOW, RuleExtractor())
+    staged = {r["test_name"]: r["state"] for r in result["rows"] if r["state"]}
+
+    assert staged["Thyroid panel"] == "result_produced"
+    assert staged["Group and save"] == "ordered"
+    assert result["patient"] == "MK-4631"
+
+
+def test_no_unit_survives_a_dotted_line():
+    report = "Serum potassium ..... 6.8 mmol/L  HIGH  released, awaiting review"
+    rows = extract_report(report, WORKFLOW, RuleExtractor())["rows"]
+    names = " ".join(r["test_name"] for r in rows)
+    assert "Serum potassium" in names
+    for leak in ("6.8", "mmol", "HIGH"):
+        assert leak not in names
+
+
+def test_the_patient_label_is_not_mistaken_for_the_reference():
+    """'Patient ref: MK-4471' must not come back as 'ref'."""
+    assert RuleExtractor._patient_in("Patient ref: MK-4471") == "MK-4471"
+    assert RuleExtractor._patient_in("Patient ID MK-4471") == "MK-4471"
+    assert RuleExtractor._patient_in("patient reference  DEMO-P001") == "DEMO-P001"
+
+
+def test_prose_is_not_mistaken_for_a_patient_reference():
+    assert RuleExtractor._patient_in("Patient was seen on the ward") is None
+    assert RuleExtractor._patient_in("no patient here") is None
+
+
+# ------------------------------------------- what OCR actually hands us back
+#
+# Textract does not return the dotted leaders: it reads a printed row as
+# separate blocks, which scan_intake rejoins with spaces. So on a scanned
+# report the column gap is the separator that survives, not the dots.
+
+
+def test_a_column_gap_separates_the_test_from_its_status():
+    pair = RuleExtractor()._split("Frozen section   margins reported   reviewed")
+    assert pair == ("Frozen section", "margins reported   reviewed")
+
+
+def test_a_single_space_is_not_a_column_gap():
+    assert RuleExtractor()._split("Frozen section margins reported") is None
+
+
+def test_real_textract_output_stages_correctly():
+    """Verbatim from a Textract read of a generated ward report."""
+    report = "\n".join([
+        "MUZAFFAR KHAN SURGICAL HOSPITAL",
+        "Patient ref: MK-4418   Date: 13/10/2026",
+        "Frozen section   margins reported   reviewed, follow-up pending",
+        "Blood culture   growth at 18 h   specimen collected, in transit",
+        "Thyroid panel   T4 9 pmol/L   report released, awaiting review",
+    ])
+    rows = extract_report(report, WORKFLOW, RuleExtractor())
+    staged = {r["test_name"]: r["state"] for r in rows["rows"] if r["state"]}
+
+    assert staged["Frozen section"] == "result_reviewed"
+    assert staged["Blood culture"] == "sample_collected"
+    assert staged["Thyroid panel"] == "result_produced"
+    assert rows["patient"] == "MK-4418"
+
+
+# ------------------------------------------ a status holding two known words
+
+
+def test_the_word_the_writer_led_with_wins():
+    """'reviewed, follow-up pending' holds both 'reviewed' and 'pending'."""
+    assert _loose_state("reviewed, follow-up pending") == "result_reviewed"
+    assert _loose_state("pending review") == "sample_processed"
+
+
+def test_a_longer_phrase_beats_a_shorter_one_at_the_same_position():
+    assert _loose_state("result released to the ward") == "result_produced"
+
+
+def test_an_unknown_status_is_refused_rather_than_guessed():
+    assert _loose_state("something nobody wrote down") is None
+
+
+def test_an_unknown_status_leaves_the_row_for_a_human():
+    rows = extract_report(
+        "Mystery test   whatever happened here", WORKFLOW, RuleExtractor()
+    )["rows"]
+    row = next(r for r in rows if r["test_name"] == "Mystery test")
+    assert row["state"] is None
+    assert not row["ok"]
+    assert any("not one this workflow knows" in issue for issue in row["issues"])
+
+
+# ----------------------------------------------- urgency is read, not judged
+
+
+def test_a_printed_urgency_label_is_read():
+    rows = extract_report(
+        "Serum potassium   6.8 mmol/L   STAT released, awaiting review",
+        WORKFLOW, RuleExtractor(),
+    )["rows"]
+    assert rows[0]["urgency"] == "critical"
+
+
+def test_critical_and_urgent_are_read_too():
+    for label in ("CRITICAL", "urgent", "Stat"):
+        rows = extract_report(
+            f"Troponin   0.31 ng/mL   {label} released, awaiting review",
+            WORKFLOW, RuleExtractor(),
+        )["rows"]
+        assert rows[0]["urgency"] == "critical", label
+
+
+def test_a_report_with_no_label_stays_routine():
+    """A dangerous-looking number is still routine. CareChaser does not judge."""
+    rows = extract_report(
+        "Serum potassium   9.9 mmol/L   released, awaiting review",
+        WORKFLOW, RuleExtractor(),
+    )["rows"]
+    assert rows[0]["urgency"] == "routine"
+
+
+def test_a_word_containing_stat_is_not_an_urgency_label():
+    rows = extract_report(
+        "Thyroid panel   understated reading   released, awaiting review",
+        WORKFLOW, RuleExtractor(),
+    )["rows"]
+    assert rows[0]["urgency"] == "routine"

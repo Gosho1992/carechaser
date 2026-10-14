@@ -1,0 +1,14 @@
+[Unit]
+Description=Let the ward clear its work
+
+[Timer]
+# Every half hour, all day. Each clinician's own window decides whether
+# anything happens, so most ticks outside working hours do nothing.
+OnCalendar=*:00,30
+# A missed tick is a half hour nobody worked. That is a true thing about the
+# ward, so it is not replayed.
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
