@@ -123,9 +123,16 @@ Worth running rather than taking on trust. A few that make the point:
 
 ## Nine days of operation
 
-CareChaser has been running continuously since **14 October 2026**, on real
+CareChaser ran unattended every morning from **14 October 2026**, on real
 elapsed time, posting a batch of scanned reports each morning and letting a
-synthetic ward clear them through the day. Nine days, 14 to 22 October 2026:
+synthetic ward clear them through the day. The timers were switched off on
+23 October and the store frozen, so the board a reviewer sees is the board the
+run left behind rather than a moving target.
+
+The figures below cover the nine days from 14 to 22 October 2026, which is the
+window the demo video records. One further batch posted on the morning of
+23 October before the freeze, which is why the live board reads 250 stuck
+where the video shows 221. Same system, one day on.
 
 | | |
 | --- | --- |
