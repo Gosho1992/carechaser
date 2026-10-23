@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+import phrasing
 from fastapi.testclient import TestClient
 
 from carechaser_agent import CareChaserAgent, OfflineBrain, call_tool, list_tool_schemas
@@ -168,7 +170,13 @@ async def test_agent_answers_what_is_stuck_with_engine_numbers(mcp_url):
     agent = CareChaserAgent(mcp_url=mcp_url)
     turn = await agent.ask("what is stuck today")
     assert turn.tool_calls[0]["tool"] == "get_stuck_workflows"
-    assert "31 hours" in turn.reply
+    # The reply is phrased for a listener, so the raw "31 hours" no longer
+    # appears verbatim. What must hold is that the duration spoken is the
+    # engine's elapsed hours put through the one rendering function, and not
+    # a figure the phrasing layer made up.
+    elapsed = turn.tool_calls[0]["result"]["cases"][0]["hours_in_state"]
+    assert elapsed == 31.0
+    assert phrasing.say_hours(elapsed) in turn.reply
     assert "Dr. Khan" in turn.reply
 
 
@@ -218,7 +226,9 @@ def test_ask_endpoint_returns_reply_and_tool_trace(web):
     body = web.post("/api/ask", json={"said": "what is stuck today"}).json()
     assert body["ok"] is True
     assert body["tool_calls"][0]["tool"] == "get_stuck_workflows"
-    assert "stuck" in body["reply"].lower()
+    # Asserting on substance, not on the word "stuck": the reply is phrased
+    # for a listener, and the figure is what must survive the phrasing.
+    assert "past its time limit" in body["reply"].lower()
 
 
 def test_page_is_served(web):

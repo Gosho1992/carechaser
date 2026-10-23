@@ -107,6 +107,61 @@ MEASUREMENT_PATTERNS = [
 # potassium of 6.8 is routine here unless the report says otherwise.
 URGENCY_MARKER = re.compile(r"\b(critical|urgent|stat)\b", re.I)
 
+
+# Lines that are part of the document, not part of the results.
+#
+# Every ward printout carries a letterhead, a patient block, a batch number
+# and a signature line, and the two-column parser turns each of them into a
+# plausible-looking "test: status" pair — "Released by: Lab Desk" becomes a
+# test called "Released by" whose status is "lab desk". Seven days of real
+# operation produced exactly three of these per report and not one failed
+# test row, which is how the defect was found: the failure count was a
+# constant multiple of the report count.
+#
+# Deliberately a list of whole field names anchored to the start of the
+# line, not a keyword search. Wrongly discarding a genuine test is far worse
+# than keeping a header — a discarded test is a case that never exists and
+# nobody is chasing. So anything not recognised with confidence stays a test
+# and goes to a human.
+METADATA_FIELDS = (
+    "patient", "patient ref", "patient reference", "patient id", "patient name",
+    "date", "report date", "collected", "collection date", "printed",
+    "batch", "batch no", "accession", "lab no", "lab number", "report no",
+    "released by", "authorised by", "authorized by", "reported by",
+    "verified by", "signed", "signature", "consultant", "requested by",
+    "ward", "location", "department", "clinic", "hospital", "page",
+    "laboratory report", "lab report", "report",
+)
+
+# Whole lines that are banners rather than fields.
+METADATA_LINES = re.compile(
+    r"^(.*\b(hospital|laboratory report|lab report|medical cent(re|er)|"
+    r"clinic|pathology)\b.*|page \d+( of \d+)?|end of report|"
+    r"not yet acknowledged|confidential.*)$",
+    re.I,
+)
+
+
+def looks_like_metadata(name: str, status: str = "") -> bool:
+    """Is this a line off the page furniture rather than a test?
+
+    Judged on the left-hand side only. A real test name is never one of
+    these fields, and a status that happens to contain "ward" is not
+    evidence either way.
+    """
+    left = (name or "").strip().strip(":.-—– \t").lower()
+    if not left:
+        return False
+    if left in METADATA_FIELDS:
+        return True
+    return bool(METADATA_LINES.match(left))
+    # Deliberately no prefix matching. An earlier version also discarded
+    # anything starting with a field name, which threw away "Patient
+    # satisfaction survey" along with "Patient ref". The multi-word forms
+    # that actually occur are listed above; a prefix rule buys very little
+    # and risks silently deleting a test, which is the one failure this
+    # whole module exists to prevent.
+
 TIME_WORDS = {"hour", "hours", "hr", "hrs", "h", "day", "days", "minute", "minutes", "min"}
 
 # Units left stranded once their number is removed are not part of a name.
@@ -188,6 +243,12 @@ class IntakeRow:
     hours_waiting: float = 0.0
     urgency: str = "routine"
     issues: list[str] = field(default_factory=list)
+    # A line off the report that is not a test at all — letterhead, batch
+    # number, signature block. Not a failure to classify a test; a line that
+    # was never a test. Kept and shown rather than dropped silently, but
+    # counted separately, because mixing the two makes the extraction look
+    # far worse than it is and hides any real failure among the noise.
+    metadata: bool = False
 
     @property
     def ok(self) -> bool:
@@ -205,6 +266,7 @@ class IntakeRow:
             "hours_waiting": self.hours_waiting,
             "urgency": self.urgency,
             "issues": list(self.issues),
+            "metadata": self.metadata,
             "ok": self.ok,
         }
 
@@ -399,6 +461,15 @@ def validate(
                      else "routine"),
         )
 
+        # Settled before anything else: a letterhead is not a test that
+        # failed to classify, and running it through the status rules would
+        # file it under whichever failure it happened to resemble.
+        if looks_like_metadata(name, status_text):
+            row.metadata = True
+            row.issues.append("not a diagnostic test — document metadata")
+            rows.append(row)
+            continue
+
         key = name.lower()
         if key in seen:
             row.issues.append("duplicate test on this report")
@@ -471,10 +542,19 @@ def extract_report(
         }
 
     ready = [r for r in rows if r.ok]
-    flagged = [r for r in rows if not r.ok]
-    message = f"Found {len(rows)} test{'s' if len(rows) != 1 else ''}"
+    # Three counts, not two. Page furniture is neither a success nor a
+    # failure of extraction, and counting it as a failure made a clean run
+    # read as 51% accurate when every actual test row had been extracted.
+    ignored = [r for r in rows if r.metadata]
+    flagged = [r for r in rows if not r.ok and not r.metadata]
+    tests = len(rows) - len(ignored)
+
+    message = f"Found {tests} test{'s' if tests != 1 else ''}"
     if flagged:
         message += f", {len(flagged)} needing a look"
+    if ignored:
+        message += f", and ignored {len(ignored)} header or footer line"
+        message += "s" if len(ignored) != 1 else ""
     message += ". Nothing has been created yet."
 
     return {
@@ -482,8 +562,12 @@ def extract_report(
         "message": message,
         "patient": extracted.get("patient"),
         "source": extractor.name,
+        # `total` stays every row read, so nothing is hidden; `tests` is the
+        # denominator any accuracy figure should use.
         "total": len(rows),
+        "tests": tests,
         "ready": len(ready),
         "flagged": len(flagged),
+        "ignored": len(ignored),
         "rows": [row.to_dict() for row in rows],
     }

@@ -38,6 +38,31 @@ from typing import Any, Optional
 
 HERE = Path(__file__).parent
 INGEST_LOG = Path(os.environ.get("CARECHASER_INGEST_LOG", HERE / "ingest_log.jsonl"))
+
+
+# Why a row was set aside, bucketed. Intake writes a sentence with the
+# offending text inside it ("status 'reviewd, pendng' is not one this
+# workflow knows"), which is right for a human reading one row and useless
+# for counting: every row would be its own category. Half of all OCR'd rows
+# get set aside, and "why" is the first thing anyone asks.
+SKIP_REASONS: tuple[tuple[str, str], ...] = (
+    ("document metadata", "not_a_test_row"),
+    ("duplicate test", "duplicate_on_report"),
+    ("no status given", "no_status_printed"),
+    ("is not one this workflow knows", "status_not_recognised"),
+    ("is not a stage a case can start in", "stage_cannot_start"),
+    ("has no valid owner role", "no_owner_role_configured"),
+)
+
+
+def classify_skip(why: str) -> str:
+    """Bucket one skip reason. Unknown shapes keep their own bucket rather
+    than being folded into a category they do not belong to."""
+    lowered = (why or "").lower()
+    for needle, bucket in SKIP_REASONS:
+        if needle in lowered:
+            return bucket
+    return "other"
 MCP_URL = os.environ.get("CARECHASER_MCP_URL", "http://127.0.0.1:8000/mcp")
 
 
@@ -70,12 +95,19 @@ async def ingest_file(path: Path, *, dry_run: bool = False) -> dict[str, Any]:
 
     clean = [row for row in rows if row.get("ok")]
     skipped = [
-        {"text": row.get("test_name", ""), "why": (row.get("issues") or ["unclassified"])[0]}
+        {
+            "text": row.get("test_name", ""),
+            "why": (row.get("issues") or ["unclassified"])[0],
+            "reason": classify_skip((row.get("issues") or ["unclassified"])[0]),
+        }
         for row in rows
         if not row.get("ok")
     ]
 
     outcome["proposed"] = len(rows)
+    # Page furniture, counted apart from the tests. Including it in the
+    # denominator is what made a run with no failed test rows report 51%.
+    outcome["metadata"] = sum(1 for row in rows if row.get("metadata"))
     outcome["accepted"] = len(clean)
     outcome["skipped"] = skipped
     outcome["removed_fragments"] = sum(len(row.get("removed") or []) for row in rows)
@@ -106,6 +138,16 @@ async def ingest_file(path: Path, *, dry_run: bool = False) -> dict[str, Any]:
     return outcome
 
 
+def _reason_counts(results: list[dict[str, Any]]) -> dict[str, int]:
+    """How many rows were set aside for each reason, across one day."""
+    counts: dict[str, int] = {}
+    for outcome in results:
+        for row in outcome.get("skipped") or []:
+            bucket = row.get("reason") or classify_skip(row.get("why", ""))
+            counts[bucket] = counts.get(bucket, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
 async def run_day(
     day: Optional[Date] = None,
     *,
@@ -132,6 +174,7 @@ async def run_day(
     accepted = sum(r.get("accepted", 0) for r in results)
     proposed = sum(r.get("proposed", 0) for r in results)
     skipped = sum(len(r.get("skipped") or []) for r in results)
+    metadata = sum(r.get("metadata", 0) for r in results)
     removed = sum(r.get("removed_fragments", 0) for r in results)
     failed = [r["file"] for r in results if not r.get("ok")]
 
@@ -142,8 +185,14 @@ async def run_day(
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "reports": len(paths),
         "rows_proposed": proposed,
+        "rows_metadata": metadata,
+        "rows_tests": proposed - metadata,
         "rows_accepted": accepted,
         "rows_skipped": skipped,
+        # The breakdown, not just the count. Without this the log records
+        # that half the rows were set aside and nothing about why, which is
+        # the one question the number provokes.
+        "skip_reasons": _reason_counts(results),
         "cases_created": created,
         "clinical_fragments_removed": removed,
         "unreadable_files": failed,

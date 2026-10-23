@@ -413,3 +413,91 @@ def test_a_word_containing_stat_is_not_an_urgency_label():
         WORKFLOW, RuleExtractor(),
     )["rows"]
     assert rows[0]["urgency"] == "routine"
+
+
+# ------------------------------------------- page furniture is not a test
+
+
+REAL_PRINTOUT = """MUZAFFAR KHAN SURGICAL HOSPITAL
+LABORATORY REPORT  -  WARD 1
+
+Patient ref: MK-4530        Date: 14/10/2026
+Batch: 20261014-01
+
+Frozen section ............. margins reported\treviewed, follow-up pending
+Vitamin B12 ................ 310 ng/L\trequested, awaiting collection
+Serum potassium ............ 3.1 mmol/L\treport released, awaiting review
+
+Released by: Lab Desk
+Not yet acknowledged
+"""
+
+
+def test_header_and_footer_lines_are_not_proposed_as_tests():
+    """Seven days of operation set aside exactly three rows per report:
+    the letterhead, the batch number and the signature block."""
+    from intake import RuleExtractor, extract_report
+
+    out = extract_report(REAL_PRINTOUT, WORKFLOW, RuleExtractor())
+    ignored = {r["test_name"] for r in out["rows"] if r["metadata"]}
+    assert "Batch" in ignored
+    assert "Released by" in ignored
+    assert any("LABORATORY REPORT" in name.upper() for name in ignored)
+
+
+def test_every_real_test_on_that_printout_still_comes_through():
+    """The dangerous direction. A discarded test is a case that never
+    exists and nobody is chasing — far worse than keeping a header."""
+    from intake import RuleExtractor, extract_report
+
+    out = extract_report(REAL_PRINTOUT, WORKFLOW, RuleExtractor())
+    accepted = {r["test_name"] for r in out["rows"] if r["ok"]}
+    assert accepted == {"Frozen section", "Vitamin B12", "Serum potassium"}
+    assert out["tests"] == 3
+    assert out["ignored"] == 3
+    assert out["flagged"] == 0
+
+
+def test_the_accuracy_denominator_excludes_page_furniture():
+    """Counting headers as failed extractions made a clean run read as 51%
+    accurate when every test row had in fact been extracted."""
+    from intake import RuleExtractor, extract_report
+
+    out = extract_report(REAL_PRINTOUT, WORKFLOW, RuleExtractor())
+    assert out["total"] == 6          # nothing hidden
+    assert out["tests"] == 3          # what accuracy is measured against
+    assert out["ready"] / out["tests"] == 1.0
+
+
+@pytest.mark.parametrize("name", [
+    "Serum potassium", "Full blood count", "Vitamin B12", "HbA1c",
+    "COVID-19 PCR", "Group and save", "Chest imaging report",
+    "Urea and electrolytes", "Wound swab culture", "Frozen section",
+    "Histopathology (biopsy)", "Arterial blood gas", "Troponin",
+    "Coagulation screen", "Thyroid panel", "Liver function",
+    "Crossmatch 2 units", "Blood culture", "Abdominal ultrasound",
+])
+def test_no_real_test_name_is_mistaken_for_metadata(name):
+    """Every test the ward simulator can print, checked against the rule."""
+    from intake import looks_like_metadata
+
+    assert not looks_like_metadata(name, "released, not yet acknowledged")
+
+
+@pytest.mark.parametrize("name", [
+    "Patient ref", "Batch", "Released by", "Date", "Accession",
+    "Authorised by", "Page", "LABORATORY REPORT", "Ward",
+    "MUZAFFAR KHAN SURGICAL HOSPITAL", "End of report",
+])
+def test_the_usual_page_furniture_is_recognised(name):
+    from intake import looks_like_metadata
+
+    assert looks_like_metadata(name, "")
+
+
+def test_an_unfamiliar_line_stays_a_test_and_goes_to_a_human():
+    """Anything not recognised with confidence must not be discarded."""
+    from intake import looks_like_metadata
+
+    assert not looks_like_metadata("Mystery assay", "some status")
+    assert not looks_like_metadata("Patient satisfaction survey", "done")

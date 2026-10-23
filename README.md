@@ -50,13 +50,13 @@ That rule is enforced in three places, each with its own tests:
 **Streamable HTTP**, built on the MCP Python SDK 2.2. It negotiates protocol
 version **2026-07-28**.
 
-Sixteen tools, grouped:
+Seventeen tools, grouped:
 
 - **Reading** — `get_stuck_workflows`, `get_case_status`, `get_my_pending`,
   `get_followups`, `get_board_snapshot`, `get_case_timeline`
 - **Acting** — `acknowledge_result`, `escalate`, `send_chase`, `create_case`
 - **Intake** — `read_report`, `confirm_report_rows`
-- **Reading the history** — `get_insights`
+- **Reading the history** — `get_insights`, `get_evidence`
 - **Demo clock** — `get_demo_clock`, `advance_demo_clock`, `reset_demo_clock`
 
 This is the only way in. The web page does not read the case files and neither
@@ -101,10 +101,11 @@ engine is unmoved. A fluent response is not proof that an action occurred.
 python -m pytest -q
 ```
 
-**287 tests**, passing on Windows and Linux. They cover the engine, the case
+**422 tests**, passing on Windows and Linux. They cover the engine, the case
 store, follow-ups, the chase layer and its guardrail, the demo clock, report
 intake, scanned-document reading, the ward simulator, the insights layer, the
-agent, and the MCP server end to end over real HTTP.
+evidence scoring, the phrasing templates, the agent, and the MCP server end to
+end over real HTTP.
 
 Worth running rather than taking on trust. A few that make the point:
 
@@ -120,11 +121,35 @@ Worth running rather than taking on trust. A few that make the point:
 
 ---
 
-## Seven days of operation
+## Nine days of operation
 
 CareChaser has been running continuously since **14 October 2026**, on real
 elapsed time, posting a batch of scanned reports each morning and letting a
-synthetic ward clear them through the day.
+synthetic ward clear them through the day. Nine days, 14 to 22 October 2026:
+
+| | |
+| --- | --- |
+| Scanned reports read | 87 |
+| Lines read off the pages | 518 |
+| Page furniture (patient, date, batch, released-by) | 261 |
+| Actual test rows | 257 |
+| Test rows extracted into tracked cases | **255 (99%)** |
+| Genuine extraction failures | 2 |
+| Unreadable files | 0 |
+| Clinical values stripped before storage | 450 |
+
+That accept rate is worth a word, because it was wrong for most of the run. The
+log reported that about half of all OCR'd rows were being set aside, which
+looked like a serious extraction problem and was not one: the denominator
+counted page furniture. Every `Patient:`, `Date:` and `Released by:` line was
+being scored as a test row that had failed to classify. Counting test rows
+against test rows, extraction runs at 99%, and the two failures are two rows
+you can open and inspect.
+
+The fix was not a better parser. It was recording *why* each row was set aside
+instead of only how many — `daily_ingest.py` buckets the reason, and
+`replay_reasons.py` re-reads the stored PDFs to rebuild the breakdown without
+ever touching the append-only `ingest_log.jsonl`.
 
 | | |
 | --- | --- |
@@ -158,7 +183,26 @@ generator's actual parameters: the system is told nothing and recovers the
 working hours anyway.
 
 That is the claim worth testing, and it is the reason the run exists rather
-than a seeded fixture.
+than a seeded fixture. `evidence.py` scores the two against each other and
+prints its working:
+
+```bash
+python evidence.py
+```
+
+In a fresh clone that prints *"too early to score"*, and it should: the audit
+trail is runtime state, it is gitignored, and a store with no history has
+nothing to recover. The figures below come from the deployment, where nine days
+have accumulated — see the **Did it read the ward correctly?** panel at the
+bottom of the live app, or call the `get_evidence` MCP tool. To reproduce it
+from nothing, start the two systemd timers in `systemd/` and let the run
+gather; the marker turns honest at eight observations per clinician.
+
+Over the nine days, **4 of 4 recovered windows named no hour at which nobody
+works**, covering 86% of the real span. The under-coverage is the honest half:
+nine days is a small sample, and an hour with no activity in it looks the same
+as an hour nobody works. Containment is the number that must never break;
+coverage is the one that grows with the run.
 
 ## Running it locally
 
@@ -189,7 +233,7 @@ credentials in the environment, and an IAM user carrying **both**
 | `workflow.yaml` | The rules: seven stages, owners, time limits, escalation targets, roster, boundaries, and the fourteen sources the model was generalised from |
 | `carechaser_engine.py` | State machine, SLA evaluation, legal transitions, append-only history |
 | `case_store.py` | JSON-backed store with atomic writes |
-| `carechaser_mcp.py` | The MCP server and its sixteen tools |
+| `carechaser_mcp.py` | The MCP server and its seventeen tools |
 | `carechaser_web.py` + `static/` | FastAPI web client and the command-centre UI |
 | `carechaser_agent.py` | Agent layer: deterministic router, plus a Bedrock Converse path behind a flag |
 | `chase.py` | Drafting, the guardrail, and delivery channels |
@@ -197,8 +241,12 @@ credentials in the environment, and an IAM user carrying **both**
 | `intake.py` | Report → rows, with every clinical value stripped |
 | `scan_intake.py` | Scanned PDFs through Textract, columns rejoined by position on the page |
 | `insights.py` | Reads the audit trail back: where time goes, when people work, which day backs up |
+| `evidence.py` | Scores what `insights.py` recovered against `ward_profiles.json` — the inferred-versus-actual marker. Run it to reproduce the figures from the command line |
+| `phrasing.py` | Every sentence the page and the voice can say, shared so the two cannot disagree about what a status means |
+| `replay_reasons.py` | Re-reads the stored PDFs to rebuild why rows were set aside, without editing the append-only ingest log |
 | `ward_sim.py` | The synthetic ward, and the profiles the insights must recover without seeing |
 | `daily_ingest.py` | The morning job: reports in, tracked cases out |
+| `bedrock_key_check.py`, `bedrock_why.py` | Probes that establish which Bedrock models this account can reach, and distinguish the failure codes |
 | `systemd/` | The six unit files the deployment runs on |
 | `democlock.py` | Simulated clock shared across processes |
 | `voice_chase.py` | The Nova 2 Sonic voice loop |
@@ -223,11 +271,23 @@ credentials in the environment, and an IAM user carrying **both**
 | Where time goes, who works when | Counted from the audit trail. Nothing predicted, nothing fitted |
 
 **Honest caveat:** the Bedrock *text* path (`BedrockBrain`, `BedrockDrafter`)
-is implemented and tested but disabled in the deployment. The AWS account
-returns `authorizationStatus: NOT_AUTHORIZED` for every text model; a support
-case went unanswered. Nova 2 Sonic is the Bedrock model that runs. The "Ask
-CareChaser" box therefore uses the deterministic router, with
-`CARECHASER_FORCE_OFFLINE=1` set on the service.
+is implemented and tested but disabled in the deployment. Text models are
+blocked account-wide: the model listing reports
+`authorizationStatus: NOT_AUTHORIZED`, and invoking one returns
+`ValidationException: Operation not allowed` — under both sets of credentials
+and both APIs. A support case went unanswered.
+
+`bedrock_key_check.py` and `bedrock_why.py` reproduce this and report the
+error code they actually received rather than assuming one. An earlier version
+of the probe announced "AccessDenied on everything" when every failure was in
+fact `ResourceNotFound`, so they now distinguish `AccessDenied`,
+`ValidationException`, `ResourceNotFound` and `UnrecognizedClient` and print
+which came back.
+
+Nova 2 Sonic is the Bedrock model that runs, and nothing in CareChaser depends
+on the text models — which is the reason it still works. The "Ask CareChaser"
+box uses the deterministic router, with `CARECHASER_FORCE_OFFLINE=1` set on
+the service.
 
 ---
 

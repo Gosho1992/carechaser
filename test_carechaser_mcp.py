@@ -152,7 +152,7 @@ async def test_handshake_lists_every_tool(server):
         assert client.protocol_version >= "2025-11-25"
         tools = await client.list_tools()
         names = {t.name for t in tools.tools}
-        assert len(names) == 16, f"tool count changed: {sorted(names)}"
+        assert len(names) == 17, f"tool count changed: {sorted(names)}"
         assert names == {
             "get_stuck_workflows",
             "get_case_status",
@@ -170,6 +170,7 @@ async def test_handshake_lists_every_tool(server):
             "read_report",
             "confirm_report_rows",
             "get_insights",
+            "get_evidence",
         }
 
 
@@ -567,3 +568,49 @@ async def test_flagged_rows_are_skipped_not_guessed(server):
         "rows": [{"test_name": "Mystery", "state": None, "owner_role": None}]})
     assert confirmed["ok"] is False
     assert confirmed["skipped"][0]["why"]
+
+
+@pytest.mark.anyio
+async def test_evidence_marks_the_inference_over_http(server):
+    """The seventeenth tool. On a fixture with almost no history it must
+    report that it is too early rather than inventing a score."""
+    data = await _call(server, "get_evidence", {})
+    assert data["ok"] is True
+    assert set(data) >= {"run", "has_truth", "people", "weekday", "headline"}
+    assert data["spoken"] == data["headline"]
+    # Scoring a window off two timestamps would be the failure mode worth
+    # catching, so no row may claim a verdict without enough observations.
+    for row in data["people"]:
+        if not row["scored"]:
+            assert row["n"] < data["score_at"]
+
+
+@pytest.mark.anyio
+async def test_board_counters_are_not_scoped_to_the_page(server):
+    """`limit` truncates `cases`. Every counter must still describe the whole
+    queue, or the board reports "69 stuck, 5 urgent" where the 5 was really
+    "5 urgent among the first 5 shown".
+
+    The fixture is all-routine, so urgent cases are created here first —
+    without them `critical_stuck` is 0 at every page size and this test
+    cannot fail.
+    """
+    for n in range(3):
+        made = await _call(server, "create_case", {
+            "test_type": f"Coagulation screen {n}",
+            "current_state": "result_produced",
+            "owner_role": "responsible_clinician",
+            "hours_waiting": 60 + n,
+            "urgency": "critical",
+        })
+        assert made["ok"] is True, made
+
+    wide = await _call(server, "get_board_snapshot", {"limit": 50})
+    narrow = await _call(server, "get_board_snapshot", {"limit": 1})
+
+    assert wide["counts"]["critical_stuck"] >= 3, wide["counts"]
+    assert len(narrow["cases"]) == 1 < len(wide["cases"])
+    assert narrow["counts"] == wide["counts"], (
+        "a counter changed when only the page size changed: "
+        f"{narrow['counts']} vs {wide['counts']}"
+    )

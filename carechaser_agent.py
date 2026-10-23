@@ -23,9 +23,16 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from mcp import Client
+
+import phrasing
+
+# The ward's clock. A greeting is the one thing that must follow the hour on
+# the ward rather than the hour in UTC.
+KARACHI = timezone(timedelta(hours=5))
 
 DEFAULT_MCP_URL = os.environ.get("CARECHASER_MCP_URL", "http://127.0.0.1:8000/mcp")
 DEFAULT_MODEL_ID = os.environ.get(
@@ -125,6 +132,13 @@ class OfflineBrain:
         match = re.search(r"\b(?:dr\.?|doctor)\s+([A-Za-z]+)", text, re.I)
         if match:
             return f"Dr. {match.group(1).title()}"
+        # A ward is not all doctors. Without these, "what is waiting on Nurse
+        # Ayesha" finds nobody and falls through to a different answer.
+        titled = re.search(r"\b(nurse|sister|sr\.?|mr\.?|ms\.?|mrs\.?)\s+([A-Za-z]+)", text, re.I)
+        if titled:
+            title = titled.group(1).rstrip(".").title()
+            title = {"Sr": "Sr.", "Mr": "Mr.", "Ms": "Ms.", "Mrs": "Mrs."}.get(title, title)
+            return f"{title} {titled.group(2).title()}"
         if re.search(r"\blab\b", text, re.I):
             return "laboratory_team"
         if re.search(r"\b(me|my|mine|i)\b", text, re.I):
@@ -162,6 +176,18 @@ class OfflineBrain:
                 confirm = bool(re.search(r"\b(yes|confirm|do it|go ahead)\b", text))
                 return [("escalate", {"case_id": case_id, "confirm": confirm})]
 
+        # "Who is responsible if Nurse Ayesha doesn't respond", "who covers
+        # for Dr Khan", "what happens if the lab doesn't act". The escalation
+        # target is already attached to every case the engine returns, so the
+        # answer comes from their pending work rather than from a lookup the
+        # engine would have to be asked for separately.
+        if phrasing.asks_about_escalation(text):
+            target = who or self._person(said)
+            if target:
+                return [("get_my_pending", {"who": target})]
+            if case_id:
+                return [("escalate", {"case_id": case_id, "confirm": False})]
+
         if re.search(r"\b(acknowledge|reviewed|i have seen|mark it|seen it|informed)\b", text):
             if case_id:
                 event = (
@@ -184,39 +210,90 @@ class OfflineBrain:
         if case_id and re.search(r"\b(status|where|what about|how long|history)\b", text):
             return [("get_case_status", {"case_id": case_id})]
 
+        # Before the "pending" route: "how many critical cases are pending"
+        # contains "pending", and without this it comes back as one person's
+        # workload — a confident answer to a question nobody asked.
+        if phrasing.asks_about_urgency(text):
+            return [("get_board_snapshot", {"limit": 10})]
+
         if re.search(r"\b(waiting on|pending|owe|assigned to|mine|my cases)\b", text):
             return [("get_my_pending", {"who": who or self.default_actor})]
 
         if case_id:
             return [("get_case_status", {"case_id": case_id})]
 
-        return [("get_stuck_workflows", {})]
+        # "What is CareChaser", "what can you do", "hello". Answered with a
+        # live board rather than a canned paragraph, so the introduction
+        # carries real numbers and cannot go stale.
+        if phrasing.is_identity_question(text) or phrasing.is_greeting(text):
+            return [("get_board_snapshot", {"limit": 5})]
+
+        if re.search(r"\b(stuck|overdue|late|behind|attention|urgent|outstanding|today)\b", text):
+            return [("get_stuck_workflows", {})]
+
+        # Nothing matched. Previously this fell through to the stuck list,
+        # which answered a question nobody asked — in a confident voice. A
+        # workflow assistant that quietly substitutes a different question is
+        # the exact failure this project argues against, so it now says so.
+        return []
 
     def speak(self, said: str, results: list[dict[str, Any]]) -> str:
-        """Build a spoken reply from tool output only."""
+        """Build a spoken reply from tool output only.
+
+        Every figure in the sentence came out of a tool result. This method
+        chooses words; it never chooses numbers.
+        """
+        # No tool ran, which now means the router did not understand rather
+        # than that something failed.
         if not results:
-            return "I could not find anything for that."
+            return phrasing.dont_know(said)
+
         data = results[-1]["result"]
-        if isinstance(data, dict):
-            if data.get("message"):
-                return str(data["message"])
-            if data.get("headline"):
-                headline = str(data["headline"])
-                cases = data.get("cases") or []
-                if len(cases) > 1:
-                    second = cases[1]
-                    headline += (
-                        f" Next is {second['test_type']} for {second['patient']}, "
-                        f"{second['hours_in_state']:.0f} hours with {second['owner']}."
-                    )
-                return headline
-            if data.get("found") is True:
-                return (
-                    f"{data['case_id']} is in {data['state']}, "
-                    f"{data['hours_in_state']:.0f} hours, owned by {data['owner']}. "
-                    f"{'It is overdue.' if data['status'] == 'STUCK' else 'It is on time.'}"
-                )
-        return "I have the result but could not summarise it."
+        if not isinstance(data, dict):
+            return phrasing.dont_know(said)
+
+        tool = results[-1].get("tool", "")
+        opener = ""
+        now = datetime.now(KARACHI)
+
+        if phrasing.is_identity_question(said):
+            return (
+                phrasing.greeting(now, self.default_actor) + " "
+                + phrasing.introduce(data, seed=said)
+            )
+        if phrasing.is_greeting(said):
+            # A greeting gets a greeting, not the whole brochure.
+            return phrasing.short_greeting(now, self.default_actor, data, seed=said)
+
+        if tool == "get_board_snapshot" and phrasing.asks_about_urgency(said):
+            return phrasing.urgency_answer(data, seed=said)
+
+        if tool == "get_my_pending" and phrasing.asks_about_escalation(said):
+            who = results[-1].get("arguments", {}).get("who", "them")
+            return phrasing.escalation_answer(who, data, seed=said)
+
+        if tool == "get_stuck_workflows":
+            cases = data.get("cases") or []
+            return opener + phrasing.stuck_summary(
+                cases, int(data.get("total_stuck") or len(cases)), seed=said
+            )
+
+        if data.get("message"):
+            return opener + str(data["message"])
+
+        if data.get("found") is True:
+            line = phrasing.say_case(data, include_owner=True)
+            verdict = (
+                "That's past its limit."
+                if data.get("status") == "STUCK"
+                else "That's still inside its limit."
+            )
+            return f"{opener}{data['case_id']} is {line}. {verdict}"
+
+        if data.get("headline"):
+            return opener + str(data["headline"])
+
+        return phrasing.dont_know(said)
 
 
 class BedrockBrain:

@@ -73,9 +73,42 @@
   .hm-scale span{display:grid;grid-template-columns:repeat(24,1fr);gap:1px}
   .ins-note{font-size:12px;color:var(--muted);padding:2px 16px 0;max-width:72ch}
   .ins-empty{padding:12px 16px 18px;color:var(--muted);font-size:13px}
+  /* ---- Inferred against actual ----------------------------------------
+     One 24-hour track per person. The pale band is the window the generator
+     really uses; the solid block is the window the audit trail gave back.
+     A solid cell outside the band is an invented working hour, and it is the
+     only thing on this page drawn in the overdue colour. */
+  .vr{display:grid;grid-template-columns:150px 1fr 150px;gap:10px;
+    align-items:center;margin-bottom:5px;font-size:13px}
+  .vr .track{display:grid;grid-template-columns:repeat(24,1fr);gap:1px}
+  .vr .track b{height:17px;border-radius:2px;background:var(--slip);display:block}
+  .vr .track b.actual{background:color-mix(in srgb, var(--live) 38%, var(--slip))}
+  .vr-scale{display:grid;grid-template-columns:150px 1fr 150px;gap:10px;
+    font-size:10px;color:var(--muted);margin-top:2px}
+  .vr-scale span:nth-child(2){display:grid;grid-template-columns:repeat(24,1fr);
+    gap:1px}
+  .vr .track b.found{background:var(--live)}
+  .vr .track b.false{background:var(--late)}
+  .vr .verdict{text-align:right;font-size:12px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  .vr .verdict.bad{color:var(--late);font-weight:600}
+  .vr-key{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:11px;
+    color:var(--muted);margin:10px 0 0 160px}
+  .vr-key span{display:flex;align-items:center;gap:6px}
+  .vr-key i{width:13px;height:13px;border-radius:2px;display:block}
+  .tot{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));
+    gap:10px;padding:2px 16px 4px}
+  .tot div{background:var(--slip);border-radius:5px;padding:9px 11px}
+  .tot b{display:block;font-size:19px;font-variant-numeric:tabular-nums;
+    line-height:1.2}
+  .tot span{font-size:11px;color:var(--muted)}
   @media (max-width:720px){
     .ins-row{grid-template-columns:120px 1fr 72px}
     .hm,.hm-scale{grid-template-columns:96px 1fr}
+    .vr{grid-template-columns:96px 1fr;row-gap:2px}
+    .vr .verdict{grid-column:1/-1;text-align:left}
+    .vr-scale{grid-template-columns:96px 1fr}
+    .vr-key{margin-left:0}
   }
 
 
@@ -339,6 +372,25 @@
     nothing is clinical: these are statements about a workflow, not about patients.
     A pattern with fewer than eight observations is marked thin and should not be
     acted on yet.
+  </p>
+</section>
+
+
+<section class="panel" id="evidence-panel">
+  <h2>Did it read the ward correctly? <span>inferred against actual</span></h2>
+  <div class="ins-head">
+    <div class="ins-lead" id="ev-headline">Marking…</div>
+    <div class="ins-meta" id="ev-meta"></div>
+  </div>
+  <div id="ev-body"></div>
+  <p class="ins-note">
+    This ward is simulated, so there is a right answer to check against.
+    <code>ward_sim.py</code> gives every clinician a real clearing window and writes
+    it to <code>ward_profiles.json</code>. <code>insights.py</code> never opens that
+    file &mdash; a test fails if it so much as mentions it &mdash; and recovers the
+    windows from completion timestamps alone. This panel reads both and marks one
+    against the other. Run <code>python evidence.py</code> to see the same figures
+    from the command line.
   </p>
 </section>
 
@@ -746,6 +798,146 @@ async function loadInsights(){
   }
 }
 
+// ---- Inferred against actual ---------------------------------------------
+// The marking. Everything drawn here comes from the server already scored;
+// this draws two windows on one track so the comparison needs no arithmetic.
+function inWindow(hour, win){
+  if (!win) return false;
+  return win[0] <= win[1]
+    ? (hour >= win[0] && hour < win[1])
+    : (hour >= win[0] || hour < win[1]);
+}
+
+function hhmm(win){
+  return win
+    ? String(win[0]).padStart(2,"0") + ":00–" + String(win[1]).padStart(2,"0") + ":00"
+    : "—";
+}
+
+function verifyRow(row){
+  let cells = "";
+  for (let h = 0; h < 24; h++){
+    const actual = inWindow(h, row.actual_window);
+    const found = inWindow(h, row.inferred_window);
+    // A found hour outside the real window is the one error that matters:
+    // it is the hour a chase would be sent into an empty room.
+    const cls = found ? (actual ? "found" : "false") : (actual ? "actual" : "");
+    const label = found
+      ? (actual ? "recovered" : "INVENTED — not a working hour")
+      : (actual ? "works, not yet seen" : "");
+    cells += `<b class="${cls}" title="${esc(row.person)} · `
+      + `${String(h).padStart(2,"0")}:00${label ? " · " + label : ""}"></b>`;
+  }
+
+  let verdict, bad = false;
+  if (!row.actual_window){
+    verdict = "no ground truth";
+  } else if (!row.scored){
+    verdict = `thin · ${row.n} cleared`;
+  } else if (row.contained){
+    verdict = `clean · ${Math.round(row.coverage * 100)}% of span`;
+  } else {
+    verdict = `invented ${row.false_hours.length}h`;
+    bad = true;
+  }
+
+  return `<div class="vr${row.scored ? "" : " thin"}">
+    <span class="nm" title="${esc(row.person)} · actual ${hhmm(row.actual_window)}">
+      ${esc(row.person)}</span>
+    <span class="track">${cells}</span>
+    <span class="verdict${bad ? " bad" : ""}">${esc(verdict)}</span>
+  </div>`;
+}
+
+function renderEvidence(data){
+  $("ev-headline").textContent = data.headline || "";
+  const run = data.run || {};
+  $("ev-meta").textContent = run.days
+    ? `${run.days} ${run.days === 1 ? "day" : "days"} · ${run.first_day} to ${run.last_day}`
+    : "no ingest log yet";
+
+  const body = $("ev-body");
+  const totals = run.days ? `
+    <div class="tot">
+      <div><b>${run.reports}</b><span>reports read</span></div>
+      <div><b>${run.rows_accepted}/${run.rows_proposed}</b><span>rows accepted</span></div>
+      <div><b>${run.rows_set_aside}</b><span>sent for review</span></div>
+      <div><b>${run.cases_created}</b><span>cases created</span></div>
+      <div><b>${run.values_stripped}</b><span>values stripped</span></div>
+      <div><b>${run.unreadable_count}</b><span>unreadable</span></div>
+    </div>
+    <p class="ins-note">Every report counts, including the ones that failed.
+    Rows sent for review were not lost &mdash; intake refuses to guess a stage
+    it could not read, which is the designed behaviour.</p>` : "";
+
+  if (!data.has_truth){
+    body.innerHTML = totals + `<p class="ins-empty">No <code>ward_profiles.json</code>,
+      so there is nothing to mark the inference against. That is the normal state on
+      a real ward.</p>`;
+    return;
+  }
+
+  const rows = (data.people || []).map(verifyRow).join("");
+  // Without an hour scale the tracks are twenty-four anonymous squares and
+  // "recovered 14:00-17:00" cannot be read off the picture.
+  let ticks = "";
+  for (let h = 0; h < 24; h++){
+    ticks += `<b>${HOUR_TICKS.includes(h) ? String(h).padStart(2,"0") : ""}</b>`;
+  }
+  const weekday = data.weekday || {};
+  let dayLine = "";
+  if (weekday.observed_name){
+    const matches = weekday.correct === true;
+    // Both generator parameters, named. Breaches follow the clearing rate:
+    // arrivals change how many cases exist, clearing changes how long each
+    // one waits. Marking the breach count against arrivals reported a
+    // correct inference as a miss, so the yardstick is stated on the page
+    // rather than chosen out of sight.
+    const rate = weekday.clearing_rate != null
+      ? ` (${weekday.clearing_rate}&times;)` : "";
+    const arrivals = (weekday.busiest_name && weekday.busiest !== weekday.expected)
+      ? ` Most work <em>arrives</em> on <b>${esc(weekday.busiest_name)}</b>`
+        + (weekday.arrival_rate != null ? ` (${weekday.arrival_rate}&times;)` : "")
+        + ", but that is volume, not lateness."
+      : "";
+    dayLine = `<p class="ins-note" style="padding-left:0">Worst weekday:
+      the history says <b>${esc(weekday.observed_name)}</b>. The generator
+      clears least on <b>${esc(weekday.expected_name || "—")}</b>${rate} &mdash; `
+      + (weekday.correct === null
+          ? "too few stages to score yet."
+          : matches ? "recovered." : "not recovered.")
+      + arrivals + `</p>`;
+  }
+
+  body.innerHTML = totals + `
+    <div class="ins-block">
+      <h3>Working hours, recovered against real</h3>
+      ${rows || '<p class="ins-empty" style="padding:0">Nothing cleared yet.</p>'}
+      <div class="vr-scale"><span></span><span>${ticks}</span><span></span></div>
+      <div class="vr-key">
+        <span><i style="background:color-mix(in srgb,var(--live) 22%,var(--slip))"></i>
+          really works, not yet observed</span>
+        <span><i style="background:var(--live)"></i>recovered from timestamps</span>
+        <span><i style="background:var(--late)"></i>invented hour</span>
+      </div>
+      <p class="ins-note" style="padding-left:0">A solid cell inside the pale band
+      is an hour the system worked out on its own. A solid cell outside it would be
+      an hour nobody works &mdash; the error that would send a chase into an empty
+      room. Coverage grows as the run accumulates days; containment should never
+      break.</p>
+      ${dayLine}
+    </div>`;
+}
+
+async function loadEvidence(){
+  try {
+    const data = await (await fetch("/api/evidence")).json();
+    renderEvidence(data);
+  } catch (err) {
+    $("ev-headline").textContent = "Could not mark the inference.";
+  }
+}
+
 $("clock-reset").addEventListener("click", () => moveClock(null));
 
 async function loadWorkflow(){
@@ -1008,9 +1200,11 @@ fetch("/api/health").then(r => r.json()).then(d => {
 loadWorkflow();
 refreshBoard();
 loadInsights();
+loadEvidence();
 // The history changes slowly; re-reading it every five minutes is plenty and
 // keeps a long-open page honest without hammering the server.
 setInterval(loadInsights, 5 * 60 * 1000);
+setInterval(loadEvidence, 5 * 60 * 1000);
 </script>
 </body>
 </html>

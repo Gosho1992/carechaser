@@ -617,9 +617,14 @@ def get_board_snapshot(limit: int = 50) -> dict[str, Any]:
     for row in followups:
         row["when"] = describe_gap(row["hours_since_followup"])
 
+    # Counted over the whole queue, not over `cases`, which `limit` has
+    # truncated. Counting the page would put two different units in one
+    # `counts` block: "69 stuck, 5 of them urgent" where the 5 was really
+    # "5 urgent among the first 5 shown".
     critical_stuck = sum(
-        1 for row in cases
-        if str(row.get("urgency", "")).lower() in {"critical", "urgent", "critical_result"}
+        1 for case, _ in stuck
+        if str(case.result_urgency or "").lower()
+        in {"critical", "urgent", "critical_result"}
     )
     return {
         "generated_at": now.isoformat(),
@@ -627,7 +632,8 @@ def get_board_snapshot(limit: int = 50) -> dict[str, Any]:
         "counts": {
             "stuck": len(stuck),
             "critical_stuck": critical_stuck,
-            "escalation_due": sum(1 for row in cases if row.get("escalation_due")),
+            # Same reason as critical_stuck: the whole queue, not the page.
+            "escalation_due": sum(1 for _, ev in stuck if ev.escalation_due),
             "followups": len(followups),
         },
         "cases": cases,
@@ -815,6 +821,38 @@ def get_insights(limit_people: int = 10) -> dict[str, Any]:
         store.all_cases(), store.workflow, now=_now()
     ).to_dict()
     result["people"] = result["people"][:limit_people]
+    result["spoken"] = result["headline"]
+    result["ok"] = True
+    return result
+
+
+@mcp.tool(
+    title="Mark the inference against the truth",
+    description=(
+        "How well CareChaser has read its own ward back. Returns the "
+        "seven-day ingest totals, and — because this ward is simulated — "
+        "every clinician's recovered working window beside the one the "
+        "generator actually used. Use for 'is the inference any good', "
+        "'how accurate are the insights', 'what did the run show', 'prove "
+        "it learned that'. Two separate scores: whether a recovered window "
+        "contains an hour the person does not work, and how much of their "
+        "real span has been observed so far. On a ward with no generator "
+        "there is nothing to mark against and only the totals are returned."
+    ),
+)
+def get_evidence() -> dict[str, Any]:
+    """Inferred beside actual, plus what the run ingested.
+
+    `insights.py` produced the inference without ever reading the
+    generator's parameters. This tool reads both and marks one against the
+    other, which is the only reason the ground-truth file exists.
+    """
+    _refresh()
+    import evidence as evidence_module
+
+    result = evidence_module.build(
+        store.all_cases(), store.workflow, now=_now()
+    ).to_dict()
     result["spoken"] = result["headline"]
     result["ok"] = True
     return result

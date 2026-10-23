@@ -157,6 +157,13 @@ async def api_insights() -> dict[str, Any]:
     return await call_tool("get_insights", {}, MCP_URL)
 
 
+@app.get("/api/evidence")
+async def api_evidence() -> dict[str, Any]:
+    """How well the inference did. Same MCP path as everything else, so the
+    panel cannot show a score the server would not also speak."""
+    return await call_tool("get_evidence", {}, MCP_URL)
+
+
 @app.get("/api/case/{case_id}")
 async def case_detail(case_id: str) -> dict[str, Any]:
     return await call_tool("get_case_timeline", {"case_id": case_id}, MCP_URL)
